@@ -3,7 +3,7 @@ import json
 import websockets
 
 
-SERVER_IP = "11.7.16.160"
+SERVER_IP = "172.20.10.2"
 PORT = 8000
 
 
