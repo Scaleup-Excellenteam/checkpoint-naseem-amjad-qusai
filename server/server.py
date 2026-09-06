@@ -1,41 +1,171 @@
-import socket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-def run_server():
-    # 1. Create a socket object (AF_INET = IPv4, SOCK_STREAM = TCP)
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+app = FastAPI()
 
-    # Allow restarting the server immediately without "address already in use" errors
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-    # 2. Bind the socket to a host and port ('127.0.0.1' is localhost)
-    host = '127.0.0.1'
-    port = 65432
-    server_socket.bind((host, port))
+class ConnectionManager:
+    def __init__(self):
+        # websocket -> username
+        self.active_connections = {}
 
-    # 3. Listen for incoming connections (allow up to 5 queued connections)
-    server_socket.listen(5)
-    print(f"Server is listening on {host}:{port}...")
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections[websocket] = None
 
-    # 4. Accept a connection (blocks until a client connects)
-    client_socket, client_address = server_socket.accept()
-    print(f"Connected to client: {client_address}")
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.pop(websocket, None)
 
-    while True:
-        # 5. Receive data from the client (buffer size up to 1024 bytes)
-        data = client_socket.recv(1024)
-        if not data:
-            # If no data is received, the client disconnected
-            break
+    def set_username(self, websocket: WebSocket, username: str):
+        self.active_connections[websocket] = username
 
-        print(f"Received from client: {data.decode('utf-8')}")
+    def get_username(self, websocket: WebSocket):
+        return self.active_connections.get(websocket)
 
-        # 6. Echo the data back to the client
-        client_socket.sendall(data)
+    def username_exists(self, username: str):
+        return username in self.active_connections.values()
 
-    # 7. Clean up the connections
-    client_socket.close()
-    server_socket.close()
-    print("Server shut down.")
+    async def send(self, websocket: WebSocket, message: dict):
+        await websocket.send_json(message)
 
-if __name__ == '__main__':
-    run_server()
+    async def broadcast(self, message: dict):
+        for websocket, username in list(self.active_connections.items()):
+            if username is not None:
+                try:
+                    await websocket.send_json(message)
+                except Exception:
+                    self.disconnect(websocket)
+
+
+manager = ConnectionManager()
+
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "connected_clients": len(manager.active_connections)
+    }
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+
+    print("New WebSocket connection")
+
+    try:
+        while True:
+            message = await websocket.receive_json()
+
+            message_type = message.get("type")
+            data = message.get("data", {})
+
+            # LOGIN
+            if message_type == "LOGIN":
+                username = data.get("username", "").strip()
+
+                if not username:
+                    await manager.send(
+                        websocket,
+                        {
+                            "type": "ERROR",
+                            "data": {
+                                "reason": "INVALID_USERNAME"
+                            }
+                        }
+                    )
+                    continue
+
+                if manager.username_exists(username):
+                    await manager.send(
+                        websocket,
+                        {
+                            "type": "LOGIN_RESULT",
+                            "data": {
+                                "success": False,
+                                "reason": "USERNAME_ALREADY_CONNECTED"
+                            }
+                        }
+                    )
+                    continue
+
+                manager.set_username(websocket, username)
+
+                await manager.send(
+                    websocket,
+                    {
+                        "type": "LOGIN_RESULT",
+                        "data": {
+                            "success": True,
+                            "username": username
+                        }
+                    }
+                )
+
+                print(f"{username} logged in")
+
+            # CHAT
+            elif message_type == "CHAT_MESSAGE":
+
+                username = manager.get_username(websocket)
+
+                if username is None:
+                    await manager.send(
+                        websocket,
+                        {
+                            "type": "ERROR",
+                            "data": {
+                                "reason": "NOT_AUTHENTICATED"
+                            }
+                        }
+                    )
+                    continue
+
+                content = data.get("content", "").strip()
+
+                if not content:
+                    await manager.send(
+                        websocket,
+                        {
+                            "type": "ERROR",
+                            "data": {
+                                "reason": "EMPTY_MESSAGE"
+                            }
+                        }
+                    )
+                    continue
+
+                print(f"{username}: {content}")
+
+                # Server adds the sender.
+                # We do NOT trust a sender field from the client.
+                outgoing_message = {
+                    "type": "NEW_MESSAGE",
+                    "data": {
+                        "sender": username,
+                        "content": content
+                    }
+                }
+
+                await manager.broadcast(outgoing_message)
+
+            else:
+                await manager.send(
+                    websocket,
+                    {
+                        "type": "ERROR",
+                        "data": {
+                            "reason": "UNKNOWN_MESSAGE_TYPE"
+                        }
+                    }
+                )
+
+    except WebSocketDisconnect:
+        username = manager.get_username(websocket)
+
+        manager.disconnect(websocket)
+
+        if username:
+            print(f"{username} disconnected")
+        else:
+            print("Unknown client disconnected")
