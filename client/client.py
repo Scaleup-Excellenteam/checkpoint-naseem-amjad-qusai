@@ -1,31 +1,82 @@
-import socket
+import asyncio
+import json
+import websockets
 
-def client_program():
-    host = '127.0.0.1'  # loopback address for local testing
-    port = 65432  # socket server port number
 
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # IPv4 TCP socket
-    client_socket.connect((host, port))  # connect to the server
+SERVER_IP = "172.20.10.2"
+PORT = 8000
 
-    message = input(" -> ")  # take input
 
-    while message.lower().strip() != 'bye':
-        client_socket.sendall(message.encode())  # send message
-        raw = client_socket.recv(1024)  # read up to 1024 bytes; larger messages require multiple recv() calls
-        if not raw:
-            break
+async def receive_messages(websocket):
+    while True:
         try:
-            data = raw.decode('utf-8')
-        except UnicodeDecodeError:
-            print("Received non-UTF-8 data from server, skipping")
-            continue
+            message = await websocket.recv()
+            data = json.loads(message)
 
-        print('Received from server: ' + data)  # show in terminal
+            message_type = data.get("type")
+            payload = data.get("data", {})
 
-        message = input(" -> ")  # again take input
+            if message_type == "NEW_MESSAGE":
+                sender = payload.get("sender")
+                content = payload.get("content")
 
-    client_socket.close()  # close the connection
+                print(f"\n{sender}: {content}")
+
+            elif message_type == "LOGIN_RESULT":
+                print("Login result:", payload)
+
+            elif message_type == "ERROR":
+                print("Server error:", payload.get("reason"))
+
+            else:
+                print("Server:", data)
+
+        except websockets.ConnectionClosed:
+            print("\nConnection to server closed.")
+            break
 
 
-if __name__ == '__main__':
-    client_program()
+async def client_program():
+    uri = f"ws://{SERVER_IP}:{PORT}/ws"
+
+    username = input("Username: ").strip()
+
+    async with websockets.connect(uri) as websocket:
+
+        # First message: LOGIN
+        login_message = {
+            "type": "LOGIN",
+            "data": {
+                "username": username
+            }
+        }
+
+        await websocket.send(json.dumps(login_message))
+
+        # Separate task keeps listening for server messages
+        receiver_task = asyncio.create_task(
+            receive_messages(websocket)
+        )
+
+        while True:
+            message = await asyncio.to_thread(input, "-> ")
+
+            if message.lower().strip() == "bye":
+                break
+
+            chat_message = {
+                "type": "CHAT_MESSAGE",
+                "data": {
+                    "content": message
+                }
+            }
+
+            await websocket.send(
+                json.dumps(chat_message)
+            )
+
+        receiver_task.cancel()
+
+
+if __name__ == "__main__":
+    asyncio.run(client_program())
