@@ -28,7 +28,13 @@ class DLPService:
             # Explicitly incomplete: ALLOW here does not certify content as clean.
             return SecurityDecision(Decision.ALLOW, verdict="rules_not_configured")
         for detector in self._detectors:
-            if detector(content):
+            match = detector.detect(content) if hasattr(detector, "detect") else None
+            if match is not None and match.matched:
+                return SecurityDecision(
+                    Decision.BLOCK, reasons.DLP_SENSITIVE_CONTENT,
+                    "sensitive_content_detected", match.category, match.score,
+                )
+            if match is None and detector(content):
                 return SecurityDecision(
                     Decision.BLOCK, reasons.DLP_SENSITIVE_CONTENT,
                     "sensitive_content_detected",

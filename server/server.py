@@ -16,7 +16,9 @@ try:
     from security_decision import Decision
     from anti_bot import AntiBotService
     from security_pipeline import SecurityPipeline
+    from embedding_dlp import RecipeEmbeddingDetector
     import reason_codes as reasons
+
 except ImportError:  # when launched as "uvicorn server.server:app"
     from server.room import Room
     from server.accounts import AccountStore
@@ -27,6 +29,7 @@ except ImportError:  # when launched as "uvicorn server.server:app"
     from server.security_decision import Decision
     from server.anti_bot import AntiBotService
     from server.security_pipeline import SecurityPipeline
+    from server.embedding_dlp import RecipeEmbeddingDetector
     from server import reason_codes as reasons
 
 app = FastAPI()
@@ -115,7 +118,11 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 auth_service = AuthService(AccountStore(Path(__file__).with_name("accounts.sqlite3")))
-dlp_service = DLPService()
+try:
+    dlp_service = DLPService([RecipeEmbeddingDetector()])
+except RuntimeError:
+    # Keep the server importable if the embedding dependency/model is unavailable.
+    dlp_service = DLPService()
 anti_bot_service = AntiBotService()
 
 # room name -> Room
