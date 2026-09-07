@@ -1,0 +1,68 @@
+# TSPO Frontend
+
+Hebrew RTL interface in HTML, CSS and JavaScript. No build step or npm installation is required for normal use.
+
+## Run
+
+From the repository root:
+
+```sh
+python -m http.server 5500 --bind 127.0.0.1 --directory frontend
+```
+
+Open http://127.0.0.1:5500. Use HTTP, not file://, because scripts use native JavaScript modules.
+
+## Modes and current backend compatibility
+
+- Login and signup validate input and are wired to Contract v1 requests.
+- Public preview links use only fictional rooms, members and local messages. They do not grant authentication or membership.
+- `/#live` is the real connection view. It requires successful login before room access; entering its URL does not authenticate a user.
+- The current Python server implements request IDs, the `pizza` and `football` rooms, room routing and message acknowledgments. It still does not implement password authentication or SIGNUP. Accordingly `authenticationReady` defaults to false in `js/config.js`; credentials are not sent until the security work is integrated and the team enables that setting. Do not enable it for the username-only login.
+- The server settings panel allows independent WebSocket connection and HTTP /health checks. Health is a point-in-time check, not continuous monitoring or proof of a logged-in session.
+
+## Configuration
+
+`js/config.js` contains the default server URL, 10-second request timeout, authentication readiness, optional agreed room names and optional maximum message length. The UI lets users change the server URL while disconnected. HTTPS URLs map to WSS. No URL, password or session is saved in browser storage.
+
+Finalize member-list messages and updates with the team. No new WebSocket protocol types have been invented. Until then, the live view accepts a known room name and optionally suggests names from config.rooms. The current `/health` response also exposes a room/count map; a successful health check adds its validated room names as suggestions. This discovery grants no authentication or membership. Member lists remain unavailable in live mode. The demo catalog is never treated as the server catalog. Set maxMessageLength only after the contract defines the limit; the server must enforce it too.
+
+For the separate frontend origin, the backend must allow GET /health through CORS (for example the exact http://127.0.0.1:5500 origin) or serve the frontend from the same origin. WebSocket origin policy must also allow the frontend. This work does not change the backend.
+
+## Real request flow
+
+Open server settings and connect, then sign up or log in. Signup success returns to login. Login success opens the live room view. Join and leave wait for matching successful server replies. Only NEW_MESSAGE for the active room is rendered; sender comes from the server and all content is inserted as text.
+
+CHAT_MESSAGE expects a MESSAGE_RESULT for success or rejection, while NEW_MESSAGE is the separate broadcast event. The team must confirm success acknowledgment semantics and that JOIN_ROOM_RESULT is sent before room broadcasts. No delivery/read guarantee is inferred from success.
+
+Pending buttons prevent duplicate actions. Timeout never triggers resubmission. Membership-changing or chat request timeout disconnects to clear uncertain session state; the operation may already have happened on the server. Reconnection is explicit, followed by login and rejoining. Passwords are not retained or replayed. Disconnect clears authenticated user, active room and live messages. A request without request_id or an incompatible response fails closed.
+
+## Password policy
+
+At least 8 Unicode code points, one uppercase English letter, one lowercase English letter, one digit and one ASCII punctuation character. Both signup fields must match. The backend must enforce the same policy. Username rules and exact maximum lengths still need agreement.
+
+## Files
+
+- index.html / css/styles.css: screens and responsive layout.
+- js/app.js: navigation and preview/live separation.
+- js/socket.js: WebSocket lifetime, request correlation, validation, timeouts.
+- js/live.js: account, membership, messaging and health UI.
+- js/errors.js: readable reason codes.
+- js/screens/: authentication forms and local room/chat previews.
+
+## Tests
+
+With Node.js installed:
+
+```sh
+node --test frontend/tests/socket.test.mjs
+```
+
+Covers out-of-order responses, legacy login rejection, DLP errors, timeout without retry, disconnect cleanup, stale socket events, malformed payloads, response-type mismatch, URL validation and password boundaries.
+
+For a repeatable browser test, open http://127.0.0.1:5500/tests/integration.html. A red TEST FIXTURE banner identifies the isolated simulated backend. The fixture changes authenticationReady in memory only and makes no real WebSocket connections. Connect using the panel, then use demo / Demo123!, join pizza or team, send text, send BLOCK for a simulated DLP rejection, leave and disconnect. Registration is in-memory only. This fixture verifies UI integration; it does not validate the team's real server. Do not deploy the tests directory as a production application.
+
+Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, preview room filtering, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
+
+## Remaining team integration
+
+Real multi-laptop testing, actual auth and security enforcement, room/member discovery, exact message length and acknowledgment semantics require the server implementation. Changes here are frontend only. No commits or pushes are made automatically.
