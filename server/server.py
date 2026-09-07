@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 try:
     from room import Room
@@ -650,3 +651,13 @@ async def websocket_endpoint(websocket: WebSocket):
         pass
     finally:
         cleanup_connection(websocket)
+
+
+# Keep this mount last so API and WebSocket routes take precedence. Serving the
+# frontend from FastAPI gives local and LAN users one address for the whole app.
+frontend_directory = Path(__file__).resolve().parent.parent / "frontend"
+app.mount(
+    "/",
+    StaticFiles(directory=frontend_directory, html=True),
+    name="frontend",
+)

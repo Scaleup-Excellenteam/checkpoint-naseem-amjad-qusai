@@ -4,13 +4,13 @@ Hebrew RTL interface in HTML, CSS and JavaScript. No build step or npm installat
 
 ## Run
 
-From the repository root:
+From the repository root, activate the virtual environment and run the integrated server:
 
 ```sh
-python -m http.server 5500 --bind 127.0.0.1 --directory frontend
+uvicorn server.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://127.0.0.1:5500. Use HTTP, not file://, because scripts use native JavaScript modules.
+Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` from the same address. No separate frontend server is needed. Use HTTP, not file://, because scripts use native JavaScript modules.
 
 ## Modes and backend compatibility
 
@@ -26,7 +26,7 @@ Open http://127.0.0.1:5500. Use HTTP, not file://, because scripts use native Ja
 
 Finalize member-list messages and updates with the team. No new WebSocket protocol types have been invented. Until then, the live view accepts a known room name and optionally suggests names from config.rooms. The current `/health` response also exposes a room/count map; a successful health check adds its validated room names as suggestions. This discovery grants no authentication or membership. Member lists remain unavailable in live mode. The demo catalog is never treated as the server catalog. The frontend and server both enforce a 4096-character message limit.
 
-The backend allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500`. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when serving the frontend elsewhere.
+The normal integrated setup uses one origin, so CORS is not involved. The backend also allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500` for standalone frontend development. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when using another development origin.
 
 ## Real request flow
 
