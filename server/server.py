@@ -527,12 +527,54 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         )
 
 
+async def handle_list_rooms(websocket: WebSocket, request_id, data: dict):
+    """Return the server room catalog without exposing member identities."""
+    username = manager.get_username(websocket)
+    authorization = authorize("LIST_ROOMS", username)
+    if not authorization.allowed:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                authorization.reason,
+                "User must be logged in before listing rooms",
+            ),
+        )
+        return
+
+    room_list = [
+        {
+            "name": room.name,
+            "members": len(room.members),
+            "joined": room.has_member(username),
+        }
+        for room in sorted(rooms.values(), key=lambda candidate: candidate.name)
+    ]
+    await manager.send(
+        websocket,
+        {
+            "type": "ROOMS_LIST",
+            "request_id": request_id,
+            "data": {"rooms": room_list},
+        },
+    )
+    print(f"{username} listed {len(room_list)} room(s)")
+
+
 HANDLERS = {
     "SIGNUP": handle_signup,
     "LOGIN": handle_login,
     "JOIN_ROOM": handle_join_room,
     "LEAVE_ROOM": handle_leave_room,
     "CHAT_MESSAGE": handle_chat_message,
+    "LIST_ROOMS": handle_list_rooms,
+}
+
+AUTH_REQUIRED_TYPES = {
+    "JOIN_ROOM",
+    "LEAVE_ROOM",
+    "CHAT_MESSAGE",
+    "LIST_ROOMS",
 }
 
 
@@ -650,6 +692,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     ),
                 )
                 print(f"Unknown message type received: {message_type}")
+                continue
+
+            username = manager.get_username(websocket)
+            if message_type in AUTH_REQUIRED_TYPES and username is None:
+                await manager.send(
+                    websocket,
+                    error_message(
+                        request_id,
+                        "NOT_AUTHENTICATED",
+                        f"You must be logged in to use {message_type}",
+                    ),
+                )
+                print(
+                    f"Rejected {message_type} from an "
+                    "unauthenticated connection"
+                )
                 continue
 
             await handler(websocket, request_id, data)

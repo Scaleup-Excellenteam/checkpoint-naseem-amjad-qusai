@@ -142,9 +142,28 @@ export function setupLive() {
       authPending = true;
       const token = generation;
       try {
-        await socket.request(type, credentials);
+        const result = await socket.request(type, credentials);
         if (token !== generation) throw new ConnectionError('DISCONNECTED');
-        if (type === 'LOGIN') { user = credentials.username; update(); location.hash = 'live'; }
+        if (type === 'LOGIN') {
+          if (typeof result.username !== 'string' || !result.username) {
+            socket.fail('CONTRACT_MISMATCH');
+            throw new ConnectionError('CONTRACT_MISMATCH');
+          }
+          const confirmedUsername = result.username;
+          const catalog = await socket.request('LIST_ROOMS', {});
+          if (!catalog.rooms.every((item) => item && typeof item.name === 'string'
+            && item.name.trim() && Number.isInteger(item.members) && item.members >= 0
+            && typeof item.joined === 'boolean')) {
+            socket.fail('CONTRACT_MISMATCH');
+            throw new ConnectionError('CONTRACT_MISMATCH');
+          }
+          knownRooms.clear();
+          catalog.rooms.forEach((item) => knownRooms.add(item.name));
+          user = confirmedUsername;
+          renderKnownRooms();
+          update();
+          location.hash = 'live';
+        }
       } catch (error) {
         // A late login must not silently establish a session after UI timeout.
         if (error.code === 'REQUEST_TIMEOUT') socket.disconnect();

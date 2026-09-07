@@ -22,7 +22,7 @@ class SentenceTransformerEmbeddingProvider:
                 from sentence_transformers import SentenceTransformer
             except ImportError as error:
                 raise RuntimeError(
-                    "sentence-transformers is required for semantic recipe DLP; install requirements.txt"
+                    "sentence-transformers is required for semantic recipe DLP; install requirements-dlp.txt"
                 ) from error
             model = SentenceTransformer(model_name)
         self.model = model

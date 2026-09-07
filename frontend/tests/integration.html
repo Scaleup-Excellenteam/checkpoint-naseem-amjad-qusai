@@ -21,15 +21,16 @@ class FixtureSocket {
   send(raw) {
     const request = JSON.parse(raw);
     const { type, request_id, data } = request;
-    const names = { SIGNUP:'SIGNUP_RESULT', LOGIN:'LOGIN_RESULT', JOIN_ROOM:'JOIN_ROOM_RESULT', LEAVE_ROOM:'LEAVE_ROOM_RESULT', CHAT_MESSAGE:'MESSAGE_RESULT' };
+    const names = { SIGNUP:'SIGNUP_RESULT', LOGIN:'LOGIN_RESULT', JOIN_ROOM:'JOIN_ROOM_RESULT', LEAVE_ROOM:'LEAVE_ROOM_RESULT', CHAT_MESSAGE:'MESSAGE_RESULT', LIST_ROOMS:'ROOMS_LIST' };
     let result = { success: true };
     if (type === 'SIGNUP') {
       if (accounts.has(data.username)) result = { success:false, reason:'USERNAME_ALREADY_EXISTS' };
       else accounts.set(data.username, data.password);
     } else if (type === 'LOGIN') {
       if (accounts.get(data.username) !== data.password) result = { success:false, reason:'INVALID_CREDENTIALS' };
-      else this.user = data.username;
+      else { this.user = data.username; result.username = data.username; }
     } else if (!this.user) result = { success:false, reason:'NOT_AUTHENTICATED' };
+    else if (type === 'LIST_ROOMS') result = { rooms:config.rooms.map((name) => ({ name, members:0, joined:name === this.room })) };
     else if (type === 'JOIN_ROOM') {
       if (!config.rooms.includes(data.room)) result = { success:false, reason:'ROOM_NOT_FOUND' };
       else { this.room = data.room; result.room = data.room; }

@@ -74,3 +74,14 @@ test('password boundary and composition rules', () => {
   assert.equal(Object.values(passwordChecks('Abc12!xy')).every(Boolean), true);
   assert.equal(Object.values(passwordChecks('abcdefgh')).every(Boolean), false);
 });
+
+test('room catalog response resolves LIST_ROOMS without a success field', async () => {
+  const { client, wire } = connected();
+  const result = client.request('LIST_ROOMS', {});
+  wire.reply({
+    type: 'ROOMS_LIST', request_id: wire.sent[0].request_id,
+    data: { rooms: [{ name: 'pizza', members: 2, joined: true }] },
+  });
+  assert.deepEqual(await result, { rooms: [{ name: 'pizza', members: 2, joined: true }] });
+  client.disconnect();
+});

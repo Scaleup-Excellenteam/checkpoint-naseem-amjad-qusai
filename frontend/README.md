@@ -24,7 +24,7 @@ Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` fro
 
 `js/config.js` contains the default server URL, 10-second request timeout, authentication readiness, optional agreed room names and optional maximum message length. The UI lets users change the server URL while disconnected. HTTPS URLs map to WSS. No URL, password or session is saved in browser storage.
 
-Finalize member-list messages and updates with the team. No new WebSocket protocol types have been invented. Until then, the live view accepts a known room name and optionally suggests names from config.rooms. The current `/health` response also exposes a room/count map; a successful health check adds its validated room names as suggestions. This discovery grants no authentication or membership. Member lists remain unavailable in live mode. The demo catalog is never treated as the server catalog. The frontend and server both enforce a 4096-character message limit.
+After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_LIST` response. The server returns room names, member counts, and the requesting user's joined state without exposing member usernames. The `/health` room map remains available for a public status check, but it does not grant authentication or membership. The frontend and server both enforce a 4096-character message limit.
 
 The normal integrated setup uses one origin, so CORS is not involved. The backend also allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500` for standalone frontend development. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when using another development origin.
 
@@ -57,12 +57,12 @@ With Node.js installed:
 node --test frontend/tests/socket.test.mjs
 ```
 
-Covers out-of-order responses, legacy login rejection, DLP errors, timeout without retry, disconnect cleanup, stale socket events, malformed payloads, response-type mismatch, URL validation and password boundaries.
+Covers out-of-order responses, legacy login rejection, DLP errors, room catalog responses, timeout without retry, disconnect cleanup, stale socket events, malformed payloads, response-type mismatch, URL validation and password boundaries.
 
-For a repeatable browser test, open http://127.0.0.1:5500/tests/integration.html. A red TEST FIXTURE banner identifies the isolated simulated backend. The fixture changes authenticationReady in memory only and makes no real WebSocket connections. Connect using the panel, then use demo / Demo123!, join pizza or team, send text, send BLOCK for a simulated DLP rejection, leave and disconnect. Registration is in-memory only. This fixture verifies UI integration; it does not validate the team's real server. Do not deploy the tests directory as a production application.
+For a repeatable browser test, open http://127.0.0.1:8000/tests/integration.html. A red TEST FIXTURE banner identifies the isolated simulated backend. The fixture changes authenticationReady in memory only and makes no real WebSocket connections. Connect using the panel, then use demo / Demo123!, join pizza or team, send text, send BLOCK for a simulated DLP rejection, leave and disconnect. Registration is in-memory only. This fixture verifies UI integration; it does not validate the team's real server. Do not deploy the tests directory as a production application.
 
 Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, preview room filtering, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
 
 ## Remaining team work
 
-Run a real multi-laptop test before merging to `main`. Authentication, room isolation and the security pipeline are integrated. The default DLP detector list and reputation provider are deliberately unconfigured; the security owner still needs to connect the agreed production detectors/provider. Room member discovery is not part of Contract v1 and remains unavailable in the live UI.
+Run a real multi-laptop test before merging to `main`. Authentication, room isolation, room catalog discovery, and the security pipeline are integrated. Semantic recipe DLP uses the optional `requirements-dlp.txt` model dependency and falls back to an unconfigured detector when it is unavailable. The production reputation provider for Anti-Bot still needs to be selected and configured.

@@ -1,6 +1,7 @@
 const replies = {
   SIGNUP: 'SIGNUP_RESULT', LOGIN: 'LOGIN_RESULT', JOIN_ROOM: 'JOIN_ROOM_RESULT',
   LEAVE_ROOM: 'LEAVE_ROOM_RESULT', CHAT_MESSAGE: 'MESSAGE_RESULT',
+  LIST_ROOMS: 'ROOMS_LIST',
 };
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -90,8 +91,11 @@ export class ChatSocket {
     const item = this.pending.get(message.request_id);
     // Ignore late replies; timed-out actions are never automatically retried.
     if (!item) return;
-    if (message.type !== 'ERROR' && (message.type !== item.expected || typeof message.data.success !== 'boolean')) {
-      return this.fail('CONTRACT_MISMATCH');
+    if (message.type !== 'ERROR') {
+      const validResult = item.expected === 'ROOMS_LIST'
+        ? Array.isArray(message.data.rooms)
+        : typeof message.data.success === 'boolean';
+      if (message.type !== item.expected || !validResult) return this.fail('CONTRACT_MISMATCH');
     }
     clearTimeout(item.timer);
     this.pending.delete(message.request_id);
