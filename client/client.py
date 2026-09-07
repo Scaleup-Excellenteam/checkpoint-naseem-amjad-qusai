@@ -1,9 +1,11 @@
 import asyncio
 import json
+import uuid
+
 import websockets
 
 
-SERVER_IP = "11.7.16.160"
+SERVER_IP = "172.20.10.2"
 PORT = 8000
 
 
@@ -21,6 +23,18 @@ async def receive_messages(websocket):
                 content = payload.get("content")
 
                 print(f"\n{sender}: {content}")
+
+            elif message_type == "JOIN_ROOM_RESULT":
+                if payload.get("success"):
+                    print(f"\nJoined room '{payload.get('room')}'")
+                else:
+                    print("\nJoin failed:", payload.get("reason"))
+
+            elif message_type == "LEAVE_ROOM_RESULT":
+                if payload.get("success"):
+                    print(f"\nLeft room '{payload.get('room')}'")
+                else:
+                    print("\nLeave failed:", payload.get("reason"))
 
             elif message_type == "LOGIN_RESULT":
                 print("Login result:", payload)
@@ -63,6 +77,21 @@ async def client_program():
 
             if message.lower().strip() == "bye":
                 break
+
+            # /join <room>
+            if message.strip().startswith("/join"):
+                room = message.strip()[len("/join"):].strip()
+
+                join_message = {
+                    "type": "JOIN_ROOM",
+                    "request_id": str(uuid.uuid4()),
+                    "data": {
+                        "room": room
+                    }
+                }
+
+                await websocket.send(json.dumps(join_message))
+                continue
 
             chat_message = {
                 "type": "CHAT_MESSAGE",
