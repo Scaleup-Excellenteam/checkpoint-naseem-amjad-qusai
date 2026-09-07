@@ -384,6 +384,20 @@ class SyntheticReputationProvider:
         )
 
 
+class SyntheticURLReputationProvider(SyntheticReputationProvider):
+    def __init__(self, malicious):
+        super().__init__(False)
+        self.url_malicious = malicious
+        self.seen_urls = []
+
+    def check_url(self, url):
+        self.seen_urls.append(url)
+        return ReputationResult(
+            "malicious_url" if self.url_malicious else "clean_url",
+            self.url_malicious,
+        )
+
+
 def test_malicious_peer_blocks_delivery_and_dlp_using_trusted_address(
     auth, monkeypatch, caplog, capsys
 ):
@@ -425,6 +439,55 @@ def test_malicious_peer_blocks_delivery_and_dlp_using_trusted_address(
     for secret in (content, PASSWORD, account.password_hash.hex(), account.salt.hex()):
         assert secret not in caplog.text + captured.out + captured.err
         assert secret not in str(record.__dict__)
+
+
+def test_malicious_url_blocks_delivery_before_dlp(auth, monkeypatch, caplog):
+    auth.signup("alice", PASSWORD)
+    provider = SyntheticURLReputationProvider(True)
+    monkeypatch.setattr(
+        server,
+        "anti_bot_service",
+        AntiBotService(provider, provider),
+    )
+
+    def forbidden_detector(content):
+        pytest.fail("Malicious URL reached DLP")
+
+    async def forbidden_delivery(usernames, message):
+        pytest.fail("Malicious URL reached delivery")
+
+    monkeypatch.setattr(server, "dlp_service", DLPService([forbidden_detector]))
+    monkeypatch.setattr(server.manager, "send_to_users", forbidden_delivery)
+    content = "open https://malicious.example/path#fragment"
+    with caplog.at_level(logging.INFO, logger="tspo.security"):
+        socket = run_socket(
+            credentials(),
+            {
+                "type": "CHAT_MESSAGE",
+                "request_id": "malicious-url",
+                "data": {"content": content},
+            },
+            address="server-peer",
+        )
+
+    assert provider.seen == ["server-peer"]
+    assert provider.seen_urls == ["https://malicious.example/path"]
+    assert socket.sent[1:] == [{
+        "type": "MESSAGE_RESULT",
+        "request_id": "malicious-url",
+        "data": {
+            "success": False,
+            "decision": "BLOCK",
+            "reason": "MALICIOUS_ADDRESS",
+            "room": "pizza",
+        },
+    }]
+    assert [record.security_event for record in caplog.records] == [
+        "anti_bot",
+        "anti_bot_url",
+    ]
+    assert caplog.records[1].url_count == 1
+    assert content not in caplog.text
 
 
 def test_clean_peer_reaches_dlp_and_delivery_with_server_identity(auth, monkeypatch, caplog):

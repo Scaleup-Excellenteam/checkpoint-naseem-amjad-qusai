@@ -21,8 +21,13 @@ def log_anti_bot_decision(result: SecurityDecision, username: str | None,
     _log_decision("anti_bot", result, username, address)
 
 
+def log_url_reputation_decision(result: SecurityDecision, username: str | None,
+                                url_count: int) -> None:
+    _log_decision("anti_bot_url", result, username, url_count=url_count)
+
+
 def _log_decision(event: str, result: SecurityDecision, username: str | None,
-                  address: str | None = None) -> None:
+                  address: str | None = None, url_count: int | None = None) -> None:
     fields = {
         "security_event": event,
         "action": "CHAT_MESSAGE",
@@ -33,6 +38,8 @@ def _log_decision(event: str, result: SecurityDecision, username: str | None,
     }
     if event == "anti_bot":
         fields["address"] = address
+    if event == "anti_bot_url":
+        fields["url_count"] = url_count
     if result.category is not None:
         fields["category"] = result.category
     if result.score is not None:

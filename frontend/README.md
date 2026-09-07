@@ -30,7 +30,7 @@ The normal integrated setup uses one origin, so CORS is not involved. The backen
 
 ### VirusTotal address reputation
 
-Anti-Bot can use the VirusTotal API v3 to check the server-derived public IP address of a WebSocket client. Keep the API key outside the repository and export it before starting the server:
+Anti-Bot can use the VirusTotal API v3 to check both the server-derived public IP address of a WebSocket client and HTTP(S) URLs found in a chat message. Keep the API key outside the repository and export it before starting the server:
 
 ```sh
 read -rsp "VirusTotal API key: " VIRUSTOTAL_API_KEY; echo
@@ -39,7 +39,9 @@ export TSPO_VT_MALICIOUS_THRESHOLD=1
 uvicorn server.server:app --host 0.0.0.0 --port 8000
 ```
 
-The key is sent only in VirusTotal's `x-apikey` header. Results are cached for 15 minutes to conserve the public API quota. Private, loopback and other non-public addresses are skipped, so a local WSL/LAN test normally records `virustotal_non_public_address`. API errors and quota failures record `virustotal_unavailable` and do not crash or block chat without evidence. If the environment variable is absent, the existing neutral `reputation_not_configured` verdict remains in use.
+The key is sent only in VirusTotal's `x-apikey` header. Results are cached for 15 minutes to conserve the public API quota. Private, loopback and other non-public addresses are skipped, so a local WSL/LAN test normally records `virustotal_non_public_address` for the peer while public URLs in its messages are still checked. A URL report with enough malicious detections blocks the message with the existing `MALICIOUS_ADDRESS` Contract reason before DLP or room delivery. URL text and query parameters are sent to VirusTotal for the report lookup but are never written to the security log.
+
+The chat path reads existing VirusTotal URL reports and does not submit unknown URLs for a new public scan. A missing report, API error, or quota failure is recorded as incomplete evidence and does not falsely label the URL malicious. If `VIRUSTOTAL_API_KEY` is absent, the existing neutral unconfigured verdicts remain in use.
 
 ## Real request flow
 
