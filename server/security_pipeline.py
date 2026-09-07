@@ -29,7 +29,11 @@ class SecurityPipeline:
         # The final allow verdict retains incomplete reputation evidence instead
         # of presenting a clean DLP result as a fully screened security outcome.
         if dlp.decision is Decision.ALLOW and reputation.verdict in (
-            "reputation_not_configured", "address_unavailable"
+            "reputation_not_configured",
+            "address_unavailable",
+            "virustotal_unavailable",
+            "virustotal_non_public_address",
+            "virustotal_invalid_address",
         ):
             return SecurityDecision(Decision.ALLOW, verdict=reputation.verdict)
         return dlp

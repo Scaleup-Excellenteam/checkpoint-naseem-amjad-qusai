@@ -2,3 +2,4 @@
 __pycache__/
 *.pyc
 /server/accounts.sqlite3*
+.env

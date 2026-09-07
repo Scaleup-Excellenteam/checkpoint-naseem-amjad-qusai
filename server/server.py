@@ -17,6 +17,7 @@ try:
     from anti_bot import AntiBotService
     from security_pipeline import SecurityPipeline
     from embedding_dlp import RecipeEmbeddingDetector
+    from virustotal import VirusTotalReputationProvider
     import reason_codes as reasons
 
 except ImportError:  # when launched as "uvicorn server.server:app"
@@ -30,6 +31,7 @@ except ImportError:  # when launched as "uvicorn server.server:app"
     from server.anti_bot import AntiBotService
     from server.security_pipeline import SecurityPipeline
     from server.embedding_dlp import RecipeEmbeddingDetector
+    from server.virustotal import VirusTotalReputationProvider
     from server import reason_codes as reasons
 
 app = FastAPI()
@@ -123,7 +125,17 @@ try:
 except RuntimeError:
     # Keep the server importable if the embedding dependency/model is unavailable.
     dlp_service = DLPService()
-anti_bot_service = AntiBotService()
+virustotal_api_key = os.environ.get("VIRUSTOTAL_API_KEY")
+if virustotal_api_key:
+    virustotal_threshold = int(os.environ.get("TSPO_VT_MALICIOUS_THRESHOLD", "1"))
+    anti_bot_service = AntiBotService(
+        VirusTotalReputationProvider(
+            virustotal_api_key,
+            malicious_threshold=virustotal_threshold,
+        )
+    )
+else:
+    anti_bot_service = AntiBotService()
 
 # room name -> Room
 rooms = {
@@ -469,8 +481,11 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
     content = content.strip()
     client = getattr(websocket, "client", None)
     address = getattr(client, "host", None)
-    security_result = SecurityPipeline(anti_bot_service, dlp_service).evaluate(
-        content, address, username
+    security_result = await asyncio.to_thread(
+        SecurityPipeline(anti_bot_service, dlp_service).evaluate,
+        content,
+        address,
+        username,
     )
     if security_result.decision is Decision.BLOCK:
         await manager.send(

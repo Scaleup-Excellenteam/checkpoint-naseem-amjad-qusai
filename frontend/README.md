@@ -28,6 +28,19 @@ After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_
 
 The normal integrated setup uses one origin, so CORS is not involved. The backend also allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500` for standalone frontend development. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when using another development origin.
 
+### VirusTotal address reputation
+
+Anti-Bot can use the VirusTotal API v3 to check the server-derived public IP address of a WebSocket client. Keep the API key outside the repository and export it before starting the server:
+
+```sh
+read -rsp "VirusTotal API key: " VIRUSTOTAL_API_KEY; echo
+export VIRUSTOTAL_API_KEY
+export TSPO_VT_MALICIOUS_THRESHOLD=1
+uvicorn server.server:app --host 0.0.0.0 --port 8000
+```
+
+The key is sent only in VirusTotal's `x-apikey` header. Results are cached for 15 minutes to conserve the public API quota. Private, loopback and other non-public addresses are skipped, so a local WSL/LAN test normally records `virustotal_non_public_address`. API errors and quota failures record `virustotal_unavailable` and do not crash or block chat without evidence. If the environment variable is absent, the existing neutral `reputation_not_configured` verdict remains in use.
+
 ## Real request flow
 
 Open server settings and connect, then sign up or log in. Signup success returns to login. Login success opens the live room view. Join and leave wait for matching successful server replies. Only NEW_MESSAGE for the active room is rendered; sender comes from the server and all content is inserted as text.
@@ -65,4 +78,4 @@ Also verify empty fields, mismatched passwords, signup return-to-login, narrow s
 
 ## Remaining team work
 
-Run a real multi-laptop test before merging to `main`. Authentication, room isolation, room catalog discovery, and the security pipeline are integrated. Semantic recipe DLP uses the optional `requirements-dlp.txt` model dependency and falls back to an unconfigured detector when it is unavailable. The production reputation provider for Anti-Bot still needs to be selected and configured.
+Run a real multi-laptop test before merging to `main`. Authentication, room isolation, room catalog discovery, and the security pipeline are integrated. Semantic recipe DLP uses the optional `requirements-dlp.txt` model dependency and falls back to an unconfigured detector when it is unavailable. Anti-Bot uses VirusTotal when `VIRUSTOTAL_API_KEY` is configured and otherwise reports neutral unconfigured evidence.

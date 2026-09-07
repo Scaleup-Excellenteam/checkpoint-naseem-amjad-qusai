@@ -1,7 +1,6 @@
-"""Address reputation interface. Production evidence awaits the Day-2 spec.
+"""Address reputation interface used by the server security pipeline.
 
 Providers receive only a server-derived address and never own sockets or delivery.
-No IP lists, score thresholds, content rules, or network requests are built in.
 """
 
 from dataclasses import dataclass
@@ -42,7 +41,11 @@ class AntiBotService:
             return SecurityDecision(Decision.ALLOW, verdict="address_unavailable")
         result = self.provider.check(address)
         if result.malicious:
-            return SecurityDecision(Decision.BLOCK, reasons.MALICIOUS_ADDRESS, "malicious_address")
+            return SecurityDecision(
+                Decision.BLOCK,
+                reasons.MALICIOUS_ADDRESS,
+                result.verdict,
+            )
         # Only configured providers may claim a clean verdict. Provider verdicts
         # must be safe metadata, never content/credentials or raw response dumps.
         return SecurityDecision(Decision.ALLOW, verdict=result.verdict)
