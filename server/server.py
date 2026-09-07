@@ -129,8 +129,13 @@ def clean_room_name(data: dict):
 # message handlers
 # ----------------------------------------------------------------------
 
-async def handle_login(websocket: WebSocket, request_id, data: dict):
+async def handle_login(websocket: WebSocket, request_id, data: dict,
+                       username: str = None):
     """Associates a username with this WebSocket.
+
+    Public: LOGIN is deliberately absent from AUTH_REQUIRED_TYPES, so the
+    `username` argument is whatever this connection had before (normally
+    None) and is intentionally unused.
 
     NOTE: real credential checking / signup persistence belongs to the
     Auth teammate. This only does the connection <-> username binding
@@ -183,21 +188,8 @@ async def handle_login(websocket: WebSocket, request_id, data: dict):
     print(f"{username} logged in")
 
 
-async def handle_join_room(websocket: WebSocket, request_id, data: dict):
-    username = manager.get_username(websocket)
-
-    if username is None:
-        await manager.send(
-            websocket,
-            error_message(
-                request_id,
-                "NOT_AUTHENTICATED",
-                "User must be logged in before joining a room",
-            ),
-        )
-        print("Rejected JOIN_ROOM from an unauthenticated connection")
-        return
-
+async def handle_join_room(websocket: WebSocket, request_id, data: dict,
+                           username: str):
     room_name = clean_room_name(data)
 
     # missing, wrong type, or blank
@@ -260,22 +252,8 @@ async def handle_join_room(websocket: WebSocket, request_id, data: dict):
     print(f"{username} joined room {room.name}")
 
 
-async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
-    username = manager.get_username(websocket)
-
-    # User must be logged in
-    if username is None:
-        await manager.send(
-            websocket,
-            error_message(
-                request_id,
-                "NOT_AUTHENTICATED",
-                "User must be logged in before leaving a room",
-            ),
-        )
-        print("Rejected LEAVE_ROOM from an unauthenticated connection")
-        return
-
+async def handle_leave_room(websocket: WebSocket, request_id, data: dict,
+                            username: str):
     room_name = clean_room_name(data)
 
     # Missing, wrong type, or blank room name
@@ -341,28 +319,16 @@ async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
     print(f"{username} left room {room.name}")
 
 
-async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
+async def handle_chat_message(websocket: WebSocket, request_id, data: dict,
+                              username: str):
     """Route one chat message to the members of one room.
 
     Failure convention follows JOIN_ROOM / LEAVE_ROOM:
       - protocol/auth problems      -> ERROR
       - room-level outcomes         -> MESSAGE_RESULT with success=False
     """
-    # 1. the sender is decided by the server, never by the client.
+    # 1. `username` came from the auth gate, i.e. from ConnectionManager.
     #    data["sender"] is ignored on purpose.
-    username = manager.get_username(websocket)
-
-    if username is None:
-        await manager.send(
-            websocket,
-            error_message(
-                request_id,
-                "NOT_AUTHENTICATED",
-                "User must be logged in before sending a message",
-            ),
-        )
-        print("Rejected CHAT_MESSAGE from an unauthenticated connection")
-        return
 
     # 2. the target room must be present, a string, and not blank
     room_name = clean_room_name(data)
@@ -488,11 +454,58 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
     )
 
 
+async def handle_list_rooms(websocket: WebSocket, request_id, data: dict,
+                            username: str):
+    """Report the rooms the server knows about.
+
+    The server is the source of truth here: it walks its own `rooms`
+    dictionary rather than echoing anything the client believes.
+
+    Deliberately NOT exposed:
+      - member usernames (only the count leaves the server)
+      - any "active room" flag; the active room is a client-side UX
+        concept and the server does not store one
+    """
+    room_list = [
+        {
+            "name": room.name,
+            "members": len(room.members),
+            "joined": room.has_member(username),
+        }
+        # alphabetical, so the output is stable between calls
+        for room in sorted(rooms.values(), key=lambda r: r.name)
+    ]
+
+    await manager.send(
+        websocket,
+        {
+            "type": "ROOMS_LIST",
+            "request_id": request_id,
+            "data": {
+                "rooms": room_list,
+            },
+        },
+    )
+
+    print(f"{username} listed {len(room_list)} room(s)")
+
+
 HANDLERS = {
     "LOGIN": handle_login,
     "JOIN_ROOM": handle_join_room,
     "LEAVE_ROOM": handle_leave_room,
     "CHAT_MESSAGE": handle_chat_message,
+    "LIST_ROOMS": handle_list_rooms,
+}
+
+# Message types that may only be used by a logged-in connection. Anything
+# not listed here is public -- LOGIN above all, which must stay reachable
+# or nobody could ever authenticate.
+AUTH_REQUIRED_TYPES = {
+    "JOIN_ROOM",
+    "LEAVE_ROOM",
+    "CHAT_MESSAGE",
+    "LIST_ROOMS",
 }
 
 
@@ -627,7 +640,27 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(f"Unknown message type received: {message_type}")
                 continue
 
-            await handler(websocket, request_id, data)
+            # ---- one authentication gate for every protected type ----
+            # Resolved once, from ConnectionManager only, and handed to
+            # the handler so it never has to look it up again.
+            username = manager.get_username(websocket)
+
+            if message_type in AUTH_REQUIRED_TYPES and username is None:
+                await manager.send(
+                    websocket,
+                    error_message(
+                        request_id,
+                        "NOT_AUTHENTICATED",
+                        f"You must be logged in to use {message_type}",
+                    ),
+                )
+                print(
+                    f"Rejected {message_type} from an "
+                    f"unauthenticated connection"
+                )
+                continue
+
+            await handler(websocket, request_id, data, username)
 
     except WebSocketDisconnect:
         pass

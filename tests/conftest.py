@@ -58,3 +58,12 @@ def chat(ws, room, content, request_id="chat-1"):
         "request_id": request_id,
         "data": {"room": room, "content": content},
     })
+
+
+def list_rooms(ws, request_id="rooms-1"):
+    ws.send_json({
+        "type": "LIST_ROOMS",
+        "request_id": request_id,
+        "data": {},
+    })
+    return ws.receive_json()

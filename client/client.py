@@ -26,7 +26,7 @@ HELP_TEXT = """Commands:
   join <room>      Join a room
   leave <room>     Leave a room
   use <room>       Select active room
-  rooms            Show your joined rooms
+  rooms            List all rooms on the server
   help             Show this help
   bye              Quit
 
@@ -145,7 +145,8 @@ class ChatClient:
             self.show(HELP_TEXT)
 
         elif command == "rooms":
-            self.show(self.format_rooms())
+            # the server is the source of truth for what rooms exist
+            await self.send("LIST_ROOMS", {}, action="rooms")
 
         elif command == "join":
             # local state is NOT touched here: it waits for the server's
@@ -202,14 +203,31 @@ class ChatClient:
         self.current_room = room
         self.show(f"Active room: {room}")
 
-    def format_rooms(self) -> str:
-        if not self.joined_rooms:
-            return "You are not joined to any rooms."
+    def format_rooms_list(self, room_list) -> str:
+        """Render a server ROOMS_LIST payload.
 
-        lines = ["Joined rooms:"]
-        for room in sorted(self.joined_rooms):
-            marker = " [active]" if room == self.current_room else ""
-            lines.append(f"  * {room}{marker}")
+        [joined] is the server's answer. [active] is computed here and
+        only here: the server has no notion of an active room.
+        The server already sorts by name, so the order is left alone.
+        """
+        lines = ["Available rooms:"]
+
+        if not room_list:
+            lines.append("  No rooms available.")
+            return "\n".join(lines)
+
+        for room in room_list:
+            name = room.get("name")
+            count = room.get("members", 0)
+            unit = "member" if count == 1 else "members"
+
+            tags = ""
+            if room.get("joined"):
+                tags += " [joined]"
+            if name == self.current_room:
+                tags += " [active]"
+
+            lines.append(f"  {name} - {count} {unit}{tags}")
 
         return "\n".join(lines)
 
@@ -237,12 +255,19 @@ class ChatClient:
         elif message_type == "LEAVE_ROOM_RESULT":
             self.on_leave_result(payload, requested_room)
 
+        elif message_type == "ROOMS_LIST":
+            # display only: local joined_rooms is not overwritten from here,
+            # so an in-flight JOIN/LEAVE cannot be clobbered by a listing
+            self.show(self.format_rooms_list(payload.get("rooms", [])))
+
         elif message_type == "MESSAGE_RESULT":
             self.on_message_result(payload, requested_room)
 
         elif message_type == "ERROR":
             reason = payload.get("reason")
-            if action in ("join", "leave"):
+            if action == "rooms":
+                self.show(f"Could not list rooms: {reason}")
+            elif action in ("join", "leave"):
                 self.show(f"{action.capitalize()} failed: {reason}")
             else:
                 self.show(f"Server error: {reason}")
