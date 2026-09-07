@@ -10,7 +10,9 @@ export function setupLive() {
   let actionPending = false;
   let authPending = false;
   const status = byId('live-status');
-  const knownRooms = new Set(config.rooms);
+  const knownRooms = new Map(
+    config.rooms.map((name) => [name, { name, members: 0, joined: false }]),
+  );
   const socket = new ChatSocket({
     timeoutMs: config.requestTimeoutMs,
     onState(state) {
@@ -44,6 +46,7 @@ export function setupLive() {
     byId('live-conversation').hidden = !user || !room;
     byId('live-room-title').textContent = room || '';
     byId('live-auth-needed').hidden = Boolean(user);
+    renderKnownRooms();
   }
   byId('server-url').value = config.serverUrl;
   byId('connect-server').addEventListener('click', () => {
@@ -69,7 +72,14 @@ export function setupLive() {
           || !Object.entries(data.rooms).every(([name, count]) => name.trim() && Number.isInteger(count) && count >= 0)) {
           throw new Error();
         }
-        Object.keys(data.rooms).forEach((name) => knownRooms.add(name));
+        Object.entries(data.rooms).forEach(([name, members]) => {
+          const current = knownRooms.get(name);
+          knownRooms.set(name, {
+            name,
+            members,
+            joined: current?.joined || false,
+          });
+        });
         renderKnownRooms();
       }
       const roomSummary = data.rooms ? ` · ${Object.keys(data.rooms).length} חדרים` : '';
@@ -78,11 +88,44 @@ export function setupLive() {
     finally { clearTimeout(timer); button.disabled = false; }
   });
   function renderKnownRooms() {
-    byId('known-rooms').replaceChildren();
-    for (const name of knownRooms) {
-      const option = document.createElement('option'); option.value = name;
-      byId('known-rooms').append(option);
+    const list = byId('live-room-list');
+    list.replaceChildren();
+    let index = 0;
+    for (const item of knownRooms.values()) {
+      index++;
+      const card = document.createElement('article');
+      card.className = 'room-card live-room-card';
+      const number = document.createElement('span');
+      number.className = 'room-number';
+      number.textContent = String(index).padStart(2, '0');
+      const topic = document.createElement('span');
+      topic.className = 'room-topic';
+      topic.textContent = `${item.members} ${item.members === 1 ? 'משתמש' : 'משתמשים'} בחדר`;
+      const name = document.createElement('span');
+      name.className = 'room-name';
+      name.dir = 'auto';
+      name.textContent = item.name;
+      const description = document.createElement('span');
+      description.className = 'room-description';
+      description.textContent = item.joined
+        ? 'השרת מאשר שאתם כבר חברים בחדר הזה.'
+        : 'יש לשלוח בקשת הצטרפות לפני הכניסה לשיחה.';
+      const footer = document.createElement('span');
+      footer.className = 'room-card-footer';
+      const membership = document.createElement('span');
+      membership.textContent = item.joined ? 'כבר הצטרפתם' : 'עדיין לא הצטרפתם';
+      const join = document.createElement('button');
+      join.type = 'button';
+      join.className = 'secondary';
+      join.textContent = item.joined ? 'כניסה לחדר' : 'בקשת הצטרפות';
+      join.disabled = actionPending;
+      join.addEventListener('click', () => joinRoom(item.name, join, item.joined));
+      footer.append(membership, join);
+      card.append(number, topic, name, description, footer);
+      list.append(card);
     }
+    byId('live-room-count').textContent = `${knownRooms.size} חדרים זמינים`;
+    byId('live-rooms-empty').hidden = knownRooms.size !== 0;
   }
   renderKnownRooms();
   async function action(button, operation) {
@@ -95,24 +138,37 @@ export function setupLive() {
       status.textContent = describeError(error);
     } finally { actionPending = false; button.disabled = false; update(); }
   }
-  byId('live-join-form').addEventListener('submit', (event) => {
-    event.preventDefault();
-    const target = byId('live-room-name').value.trim();
-    if (!target) { status.textContent = 'הזינו שם חדר שקיבלתם מהצוות.'; return; }
-    action(byId('live-join'), async (token) => {
+  function joinRoom(target, button, alreadyJoined) {
+    action(button, async (token) => {
       if (!user) throw new ConnectionError('NOT_AUTHENTICATED');
-      const result = await socket.request('JOIN_ROOM', { room: target });
-      if (result.room !== target) { socket.fail('CONTRACT_MISMATCH'); throw new ConnectionError('CONTRACT_MISMATCH'); }
+      if (!alreadyJoined) {
+        const result = await socket.request('JOIN_ROOM', { room: target });
+        if (result.room !== target) { socket.fail('CONTRACT_MISMATCH'); throw new ConnectionError('CONTRACT_MISMATCH'); }
+      }
       if (token !== generation) return;
+      const current = knownRooms.get(target);
+      if (current) knownRooms.set(target, {
+        ...current,
+        members: alreadyJoined ? current.members : current.members + 1,
+        joined: true,
+      });
       room = target; byId('live-messages').replaceChildren();
-      status.textContent = 'השרת אישר את ההצטרפות לחדר.';
+      status.textContent = alreadyJoined
+        ? 'נכנסתם לחדר שאליו כבר הצטרפתם.'
+        : 'השרת אישר את ההצטרפות לחדר.';
     });
-  });
+  }
   byId('live-leave').addEventListener('click', () => action(byId('live-leave'), async (token) => {
     const target = room;
     const result = await socket.request('LEAVE_ROOM', { room: target });
     if (result.room !== target) { socket.fail('CONTRACT_MISMATCH'); throw new ConnectionError('CONTRACT_MISMATCH'); }
     if (token !== generation) return;
+    const current = knownRooms.get(target);
+    if (current) knownRooms.set(target, {
+      ...current,
+      members: Math.max(0, current.members - 1),
+      joined: false,
+    });
     room = null; byId('live-content').value = ''; byId('live-messages').replaceChildren();
     status.textContent = 'עזיבת החדר אושרה.';
   }));
@@ -158,7 +214,7 @@ export function setupLive() {
             throw new ConnectionError('CONTRACT_MISMATCH');
           }
           knownRooms.clear();
-          catalog.rooms.forEach((item) => knownRooms.add(item.name));
+          catalog.rooms.forEach((item) => knownRooms.set(item.name, { ...item }));
           user = confirmedUsername;
           renderKnownRooms();
           update();

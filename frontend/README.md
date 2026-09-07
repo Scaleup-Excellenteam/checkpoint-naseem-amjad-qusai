@@ -15,8 +15,8 @@ Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` fro
 ## Modes and backend compatibility
 
 - Login and signup validate input and are wired to Contract v1 requests.
-- Public preview links use only fictional rooms, members and local messages. They do not grant authentication or membership.
-- `/#live` is the real connection view. It requires successful login before room access; entering its URL does not authenticate a user.
+- Successful login opens the real room catalog returned by the server. The login screen no longer links to the old fictional preview.
+- `/#live` requires successful login before room access; entering its URL does not authenticate a user.
 - The integrated Python server implements signup, password login, request IDs, the `pizza` and `football` rooms, room routing and message acknowledgments. `authenticationReady` is enabled in `js/config.js`, so the live UI sends credentials according to Contract v1.
 - The server settings panel allows independent WebSocket connection and HTTP /health checks. Health is a point-in-time check, not continuous monitoring or proof of a logged-in session.
 
@@ -24,7 +24,7 @@ Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` fro
 
 `js/config.js` contains the default server URL, 10-second request timeout, authentication readiness, optional agreed room names and optional maximum message length. The UI lets users change the server URL while disconnected. HTTPS URLs map to WSS. No URL, password or session is saved in browser storage.
 
-After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_LIST` response. The server returns room names, member counts, and the requesting user's joined state without exposing member usernames. The `/health` room map remains available for a public status check, but it does not grant authentication or membership. The frontend and server both enforce a 4096-character message limit.
+After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_LIST` response. The server returns room names, member counts, and the requesting user's joined state without exposing member usernames. Those real rooms are rendered as cards with a join action. The `/health` room map remains available for a public status check, but it does not grant authentication or membership. The frontend and server both enforce a 4096-character message limit.
 
 The normal integrated setup uses one origin, so CORS is not involved. The backend also allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500` for standalone frontend development. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when using another development origin.
 
@@ -76,7 +76,7 @@ Covers out-of-order responses, legacy login rejection, DLP errors, room catalog 
 
 For a repeatable browser test, open http://127.0.0.1:8000/tests/integration.html. A red TEST FIXTURE banner identifies the isolated simulated backend. The fixture changes authenticationReady in memory only and makes no real WebSocket connections. Connect using the panel, then use demo / Demo123!, join pizza or team, send text, send BLOCK for a simulated DLP rejection, leave and disconnect. Registration is in-memory only. This fixture verifies UI integration; it does not validate the team's real server. Do not deploy the tests directory as a production application.
 
-Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, preview room filtering, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
+Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, live room cards, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
 
 ## Remaining team work
 

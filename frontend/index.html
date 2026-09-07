@@ -38,7 +38,6 @@
             <button class="primary" type="submit">התחברות <span aria-hidden="true">←</span></button>
           </form>
           <p class="alternate">עוד אין לך חשבון? <a href="#signup">מצטרפים לחבורה</a></p>
-          <a class="preview-link" href="#rooms-preview">לתצוגה מקדימה של החדרים <span aria-hidden="true">←</span></a>
         </section>
         <section id="signup-screen" aria-labelledby="signup-title" hidden>
           <span class="eyebrow">A SEAT AT THE TABLE</span><h2 id="signup-title" tabindex="-1">שמרנו לך מקום.</h2><p class="intro">כמה פרטים, ואתם צעד אחד קרוב יותר לחבורה.</p>
@@ -52,7 +51,6 @@
           </form>
           <p class="alternate">כבר חלק מהחבורה? <a href="#login">למסך ההתחברות</a></p>
         </section>
-        <p class="development-note">חיבור חשבונות דורש שרת התומך בחוזה ומאמת סיסמאות. תצוגות הדוגמה נשארות נפרדות מהמצב האמיתי.</p>
       </div>
       <footer class="footer">TSPO · פרויקט הצוות · TEL-HAI 2026</footer>
     </section>
@@ -108,8 +106,9 @@
       <p id="live-auth-needed" class="notice">נדרשת התחברות לחשבון לפני הצטרפות לחדר או קבלת הודעות. <a href="#login">למסך ההתחברות</a></p>
       <p id="live-status" class="notice" role="status" aria-live="polite"></p>
       <div id="live-room-controls" hidden>
-        <p>רשימת חדרים אוטומטית עדיין לא הוגדרה בחוזה. הזינו שם חדר ידוע שהצוות מספק; השרת יבדוק אם הוא קיים.</p>
-        <form id="live-join-form"><label for="live-room-name">שם החדר בשרת</label><input id="live-room-name" list="known-rooms" autocomplete="off" required><datalist id="known-rooms"></datalist><button id="live-join" class="primary" type="submit">בקשת הצטרפות</button></form>
+        <div class="live-rooms-heading"><div><span class="eyebrow">AVAILABLE ROOMS</span><h2>החדרים בשרת</h2><p>בחרו חדר ושלחו בקשת הצטרפות.</p></div><span id="live-room-count" role="status" aria-live="polite"></span></div>
+        <div id="live-room-list" class="room-list" aria-label="חדרים זמינים"></div>
+        <div id="live-rooms-empty" class="empty-state" hidden><h2>אין חדרים זמינים</h2><p>השרת לא החזיר חדרים שאפשר להצטרף אליהם.</p></div>
       </div>
       <section id="live-conversation" hidden aria-label="צ׳אט מחובר">
         <div class="conversation-bar"><h2 id="live-room-title"></h2><button id="live-leave" type="button" class="secondary">עזיבת חדר</button></div>
