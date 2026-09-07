@@ -1,13 +1,48 @@
-import json
+import asyncio
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
 try:
     from room import Room
+    from accounts import AccountStore
+    from auth import AuthService
+    from authorization import authorize
+    from validation import validate_chat_message
+    from dlp import DLPService
+    from security_decision import Decision
+    from anti_bot import AntiBotService
+    from security_pipeline import SecurityPipeline
+    import reason_codes as reasons
 except ImportError:  # when launched as "uvicorn server.server:app"
     from server.room import Room
+    from server.accounts import AccountStore
+    from server.auth import AuthService
+    from server.authorization import authorize
+    from server.validation import validate_chat_message
+    from server.dlp import DLPService
+    from server.security_decision import Decision
+    from server.anti_bot import AntiBotService
+    from server.security_pipeline import SecurityPipeline
+    from server import reason_codes as reasons
 
 app = FastAPI()
+frontend_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "TSPO_FRONTEND_ORIGINS",
+        "http://127.0.0.1:5500,http://localhost:5500",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=frontend_origins,
+    allow_methods=["GET"],
+    allow_headers=[],
+)
 
 
 class ConnectionManager:
@@ -78,6 +113,9 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+auth_service = AuthService(AccountStore(Path(__file__).with_name("accounts.sqlite3")))
+dlp_service = DLPService()
+anti_bot_service = AntiBotService()
 
 # room name -> Room
 rooms = {
@@ -129,69 +167,59 @@ def clean_room_name(data: dict):
 # message handlers
 # ----------------------------------------------------------------------
 
-async def handle_login(websocket: WebSocket, request_id, data: dict):
-    """Associates a username with this WebSocket.
-
-    NOTE: real credential checking / signup persistence belongs to the
-    Auth teammate. This only does the connection <-> username binding
-    the realtime layer needs.
-    """
-    username = data.get("username")
-
-    # type check before .strip(): a non-string username must not crash
-    if not isinstance(username, str) or not username.strip():
-        await manager.send(
-            websocket,
-            error_message(
-                request_id,
-                "INVALID_USERNAME",
-                "A valid username is required",
-            ),
+async def handle_authentication(
+    websocket: WebSocket, request_id, data: dict, message_type: str
+):
+    if not isinstance(request_id, str) or not request_id.strip():
+        result = {"success": False, "reason": reasons.INVALID_REQUEST_ID}
+    elif manager.get_username(websocket) is not None:
+        result = {"success": False, "reason": reasons.ALREADY_AUTHENTICATED}
+    else:
+        operation = auth_service.signup if message_type == "SIGNUP" else auth_service.login
+        result = await asyncio.to_thread(
+            operation,
+            data.get("username"),
+            data.get("password"),
         )
-        return
-
-    username = username.strip()
-
-    if manager.username_exists(username):
-        await manager.send(
-            websocket,
-            {
-                "type": "LOGIN_RESULT",
-                "request_id": request_id,
-                "data": {
+        if message_type == "LOGIN" and result["success"]:
+            username = result["username"]
+            if manager.username_exists(username):
+                result = {
                     "success": False,
                     "reason": "USERNAME_ALREADY_CONNECTED",
-                },
-            },
-        )
-        return
-
-    manager.set_username(websocket, username)
+                }
+            else:
+                manager.set_username(websocket, username)
+                print(f"{username} logged in")
 
     await manager.send(
         websocket,
         {
-            "type": "LOGIN_RESULT",
-            "request_id": request_id,
-            "data": {
-                "success": True,
-                "username": username,
-            },
+            "type": f"{message_type}_RESULT",
+            "request_id": request_id if isinstance(request_id, str) else None,
+            "data": result,
         },
     )
 
-    print(f"{username} logged in")
+
+async def handle_signup(websocket: WebSocket, request_id, data: dict):
+    await handle_authentication(websocket, request_id, data, "SIGNUP")
+
+
+async def handle_login(websocket: WebSocket, request_id, data: dict):
+    await handle_authentication(websocket, request_id, data, "LOGIN")
 
 
 async def handle_join_room(websocket: WebSocket, request_id, data: dict):
     username = manager.get_username(websocket)
 
-    if username is None:
+    authorization = authorize("JOIN_ROOM", username)
+    if not authorization.allowed:
         await manager.send(
             websocket,
             error_message(
                 request_id,
-                "NOT_AUTHENTICATED",
+                authorization.reason,
                 "User must be logged in before joining a room",
             ),
         )
@@ -263,13 +291,13 @@ async def handle_join_room(websocket: WebSocket, request_id, data: dict):
 async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
     username = manager.get_username(websocket)
 
-    # User must be logged in
-    if username is None:
+    authorization = authorize("LEAVE_ROOM", username)
+    if not authorization.allowed:
         await manager.send(
             websocket,
             error_message(
                 request_id,
-                "NOT_AUTHENTICATED",
+                authorization.reason,
                 "User must be logged in before leaving a room",
             ),
         )
@@ -352,12 +380,13 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
     #    data["sender"] is ignored on purpose.
     username = manager.get_username(websocket)
 
-    if username is None:
+    authorization = authorize("CHAT_MESSAGE", username)
+    if not authorization.allowed:
         await manager.send(
             websocket,
             error_message(
                 request_id,
-                "NOT_AUTHENTICATED",
+                authorization.reason,
                 "User must be logged in before sending a message",
             ),
         )
@@ -415,40 +444,41 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         )
         return
 
-    # 4. content: type-check BEFORE calling .strip()
+    # 4. Validate content before any security decision or delivery.
     content = data.get("content")
-
-    if not isinstance(content, str) or not content.strip():
+    validation = validate_chat_message(content)
+    if not validation.valid:
         await manager.send(
             websocket,
             error_message(
                 request_id,
-                "EMPTY_MESSAGE",
-                "Message content must be a non-empty string",
+                validation.reason,
+                "Message content is invalid",
             ),
         )
         return
 
     content = content.strip()
-
-    # ------------------------------------------------------------------
-    # SECURITY INTEGRATION POINT  (owned by the Auth / Security teammate)
-    #
-    # At this line the message is fully validated and the sender is
-    # authenticated, and NOTHING has been delivered yet. The DLP /
-    # Anti-Bot / URL-reputation ALLOW-BLOCK check goes exactly here,
-    # e.g.:
-    #
-    #     decision = security.inspect(sender=username,
-    #                                 room=room.name,
-    #                                 content=content)
-    #     if not decision.allowed:
-    #         -> MESSAGE_RESULT success=False, reason=decision.reason
-    #         return
-    #
-    # No security component exists in the repository yet, so no check is
-    # performed and the server does NOT claim this message was scanned.
-    # ------------------------------------------------------------------
+    client = getattr(websocket, "client", None)
+    address = getattr(client, "host", None)
+    security_result = SecurityPipeline(anti_bot_service, dlp_service).evaluate(
+        content, address, username
+    )
+    if security_result.decision is Decision.BLOCK:
+        await manager.send(
+            websocket,
+            {
+                "type": "MESSAGE_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "decision": "BLOCK",
+                    "reason": security_result.reason,
+                    "room": room.name,
+                },
+            },
+        )
+        return
 
     # 5. build the server-authored frame. The sender is the server's value.
     outgoing_message = {
@@ -474,21 +504,23 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         f"({delivered} recipient(s))"
     )
 
-    await manager.send(
-        websocket,
-        {
-            "type": "MESSAGE_RESULT",
-            "request_id": request_id,
-            "data": {
-                "success": True,
-                "room": room.name,
-                "recipients": delivered,
+    if request_id is not None:
+        await manager.send(
+            websocket,
+            {
+                "type": "MESSAGE_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": True,
+                    "room": room.name,
+                    "recipients": delivered,
+                },
             },
-        },
-    )
+        )
 
 
 HANDLERS = {
+    "SIGNUP": handle_signup,
     "LOGIN": handle_login,
     "JOIN_ROOM": handle_join_room,
     "LEAVE_ROOM": handle_leave_room,
@@ -541,23 +573,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # --- receive: a malformed frame must never kill the server ---
             try:
-                raw = await websocket.receive_text()
-            except (KeyError, TypeError):
-                # a non-text frame (e.g. binary) is not part of protocol V1
-                await manager.send(
-                    websocket,
-                    error_message(
-                        None,
-                        "INVALID_MESSAGE",
-                        "Only JSON text frames are supported",
-                    ),
-                )
-                print("Rejected a non-text frame")
-                continue
-
-            try:
-                message = json.loads(raw)
-            except ValueError:
+                message = await websocket.receive_json()
+            except (ValueError, KeyError, TypeError):
                 await manager.send(
                     websocket,
                     error_message(None, "INVALID_MESSAGE", "Malformed JSON"),

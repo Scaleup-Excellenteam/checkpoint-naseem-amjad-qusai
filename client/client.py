@@ -9,6 +9,7 @@ requires, and the server remains the only authority on membership.
 """
 
 import asyncio
+import getpass
 import json
 import os
 import uuid
@@ -361,36 +362,47 @@ class ChatClient:
             receiver_task.cancel()
 
 
-async def login(websocket) -> str:
-    """Ask for a username until the server accepts it."""
+async def authenticate(websocket) -> str:
+    """Sign up or log in, then return the server-confirmed username."""
     while True:
-        username = (await asyncio.to_thread(input, "Username: ")).strip()
+        operation = (await asyncio.to_thread(
+            input, "Choose login or signup [login]: "
+        )).strip().lower() or "login"
+        if operation not in {"login", "signup"}:
+            print("Enter 'login' or 'signup'.")
+            continue
 
+        username = (await asyncio.to_thread(input, "Username: ")).strip()
         if not username:
             print("Username cannot be empty.")
             continue
+        password = await asyncio.to_thread(getpass.getpass, "Password: ")
 
         await websocket.send(json.dumps({
-            "type": "LOGIN",
+            "type": operation.upper(),
             "request_id": str(uuid.uuid4()),
-            "data": {"username": username},
+            "data": {"username": username, "password": password},
         }))
 
         response = json.loads(await websocket.recv())
         payload = response.get("data", {})
 
-        if response.get("type") == "LOGIN_RESULT" and payload.get("success"):
-            print("\nLogin successful.\n")
-            return username
+        if operation == "signup" and response.get("type") == "SIGNUP_RESULT" and payload.get("success"):
+            print("Account created. Log in with the same credentials.\n")
+            continue
 
-        print(f"Login failed: {payload.get('reason')}")
+        if operation == "login" and response.get("type") == "LOGIN_RESULT" and payload.get("success"):
+            print("\nLogin successful.\n")
+            return payload.get("username", username)
+
+        print(f"{operation.title()} failed: {payload.get('reason')}")
 
 
 async def client_program():
     uri = f"ws://{SERVER_IP}:{PORT}/ws"
 
     async with websockets.connect(uri) as websocket:
-        username = await login(websocket)
+        username = await authenticate(websocket)
 
         await ChatClient(websocket, username).run()
 

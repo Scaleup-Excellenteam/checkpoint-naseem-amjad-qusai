@@ -170,7 +170,7 @@ def test_non_string_content_does_not_crash_the_server(client):
             response = ws.receive_json()
 
             assert response["type"] == "ERROR"
-            assert response["data"]["reason"] == "EMPTY_MESSAGE"
+            assert response["data"]["reason"] == "INVALID_MESSAGE"
 
         # session survived every one of them
         chat(ws, "pizza", "still alive")
@@ -356,8 +356,8 @@ def test_non_string_username_does_not_crash_login(client):
         })
         response = ws.receive_json()
 
-        assert response["type"] == "ERROR"
-        assert response["data"]["reason"] == "INVALID_USERNAME"
+        assert response["type"] == "LOGIN_RESULT"
+        assert response["data"]["reason"] == "INVALID_CREDENTIALS"
 
         # session still usable
         assert login(ws, "qusai")["data"]["success"] is True

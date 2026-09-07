@@ -12,21 +12,21 @@ python -m http.server 5500 --bind 127.0.0.1 --directory frontend
 
 Open http://127.0.0.1:5500. Use HTTP, not file://, because scripts use native JavaScript modules.
 
-## Modes and current backend compatibility
+## Modes and backend compatibility
 
 - Login and signup validate input and are wired to Contract v1 requests.
 - Public preview links use only fictional rooms, members and local messages. They do not grant authentication or membership.
 - `/#live` is the real connection view. It requires successful login before room access; entering its URL does not authenticate a user.
-- The current Python server implements request IDs, the `pizza` and `football` rooms, room routing and message acknowledgments. It still does not implement password authentication or SIGNUP. Accordingly `authenticationReady` defaults to false in `js/config.js`; credentials are not sent until the security work is integrated and the team enables that setting. Do not enable it for the username-only login.
+- The integrated Python server implements signup, password login, request IDs, the `pizza` and `football` rooms, room routing and message acknowledgments. `authenticationReady` is enabled in `js/config.js`, so the live UI sends credentials according to Contract v1.
 - The server settings panel allows independent WebSocket connection and HTTP /health checks. Health is a point-in-time check, not continuous monitoring or proof of a logged-in session.
 
 ## Configuration
 
 `js/config.js` contains the default server URL, 10-second request timeout, authentication readiness, optional agreed room names and optional maximum message length. The UI lets users change the server URL while disconnected. HTTPS URLs map to WSS. No URL, password or session is saved in browser storage.
 
-Finalize member-list messages and updates with the team. No new WebSocket protocol types have been invented. Until then, the live view accepts a known room name and optionally suggests names from config.rooms. The current `/health` response also exposes a room/count map; a successful health check adds its validated room names as suggestions. This discovery grants no authentication or membership. Member lists remain unavailable in live mode. The demo catalog is never treated as the server catalog. Set maxMessageLength only after the contract defines the limit; the server must enforce it too.
+Finalize member-list messages and updates with the team. No new WebSocket protocol types have been invented. Until then, the live view accepts a known room name and optionally suggests names from config.rooms. The current `/health` response also exposes a room/count map; a successful health check adds its validated room names as suggestions. This discovery grants no authentication or membership. Member lists remain unavailable in live mode. The demo catalog is never treated as the server catalog. The frontend and server both enforce a 4096-character message limit.
 
-For the separate frontend origin, the backend must allow GET /health through CORS (for example the exact http://127.0.0.1:5500 origin) or serve the frontend from the same origin. WebSocket origin policy must also allow the frontend. This work does not change the backend.
+The backend allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500`. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when serving the frontend elsewhere.
 
 ## Real request flow
 
@@ -63,6 +63,6 @@ For a repeatable browser test, open http://127.0.0.1:5500/tests/integration.html
 
 Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, preview room filtering, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
 
-## Remaining team integration
+## Remaining team work
 
-Real multi-laptop testing, actual auth and security enforcement, room/member discovery, exact message length and acknowledgment semantics require the server implementation. Changes here are frontend only. No commits or pushes are made automatically.
+Run a real multi-laptop test before merging to `main`. Authentication, room isolation and the security pipeline are integrated. The default DLP detector list and reputation provider are deliberately unconfigured; the security owner still needs to connect the agreed production detectors/provider. Room member discovery is not part of Contract v1 and remains unavailable in the live UI.

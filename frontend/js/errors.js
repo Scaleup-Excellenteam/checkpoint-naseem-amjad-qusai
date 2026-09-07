@@ -5,6 +5,8 @@ const messages = {
   REQUEST_TIMEOUT: 'לא התקבלה תשובה בזמן. ייתכן שהפעולה בוצעה בשרת; היא לא תישלח שוב אוטומטית.',
   CONTRACT_MISMATCH: 'תשובת השרת אינה תואמת לחוזה v1. החיבור נסגר כדי למנוע מצב כניסה שגוי.',
   AUTH_NOT_READY: 'השרת הנוכחי עדיין אינו מאמת סיסמאות. חיבור החשבונות יופעל לאחר עדכון השרת וההגדרה authenticationReady.',
+  INVALID_REQUEST_ID: 'מזהה הבקשה אינו תקין.',
+  ALREADY_AUTHENTICATED: 'כבר מחוברים לחשבון בחיבור הזה.',
   NOT_AUTHENTICATED: 'נדרשת התחברות מחדש לחשבון.',
   USERNAME_ALREADY_EXISTS: 'שם המשתמש כבר קיים. בחרו שם אחר.',
   INVALID_CREDENTIALS: 'שם המשתמש או הסיסמה שגויים.',
