@@ -7,7 +7,7 @@ from server.accounts import AccountStore
 from server.auth import AuthService, ITERATIONS
 
 
-PASSWORD = "correct horse battery staple"
+PASSWORD = "CorrectHorse1!"
 
 
 @pytest.fixture
@@ -22,11 +22,11 @@ def test_signup_creates_account(auth):
 
 def test_duplicate_signup_preserves_original_password(auth):
     assert auth.signup("alice", PASSWORD)["success"]
-    assert auth.signup(" alice ", "another password") == {
-        "success": False, "reason": "DUPLICATE_USERNAME"
+    assert auth.signup(" alice ", "AnotherPassword1!") == {
+        "success": False, "reason": "USERNAME_ALREADY_EXISTS"
     }
     assert auth.login("alice", PASSWORD)["success"]
-    assert not auth.login("alice", "another password")["success"]
+    assert not auth.login("alice", "AnotherPassword1!")["success"]
 
 
 def test_storage_contains_salted_hashes_not_plaintext(auth):
@@ -61,7 +61,7 @@ def test_accounts_survive_new_store_and_service(auth):
     auth.signup("alice", PASSWORD)
     restarted = AuthService(AccountStore(auth.store.path))
     assert restarted.login("alice", PASSWORD)["success"]
-    assert restarted.signup("alice", PASSWORD)["reason"] == "DUPLICATE_USERNAME"
+    assert restarted.signup("alice", PASSWORD)["reason"] == "USERNAME_ALREADY_EXISTS"
 
 
 @pytest.mark.parametrize("username", [None, 123, "", "   ", "a" * 65, "a\nb"])
@@ -88,7 +88,7 @@ def test_invalid_login_fields_use_generic_error(auth, username, password):
 
 
 def test_password_whitespace_is_preserved(auth):
-    password = "  exact password  "
+    password = "  ExactPassword1!  "
     auth.signup("alice", password)
     assert auth.login("alice", password)["success"]
     assert not auth.login("alice", password.strip())["success"]
@@ -98,4 +98,4 @@ def test_simultaneous_signup_creates_only_one_account(auth):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: auth.signup("alice", PASSWORD), range(2)))
     assert sum(result["success"] for result in results) == 1
-    assert [r["reason"] for r in results if not r["success"]] == ["DUPLICATE_USERNAME"]
+    assert [r["reason"] for r in results if not r["success"]] == ["USERNAME_ALREADY_EXISTS"]

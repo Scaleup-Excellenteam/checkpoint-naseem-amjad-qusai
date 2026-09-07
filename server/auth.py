@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import secrets
+import string
 
 if __package__:
     from .accounts import Account
@@ -34,9 +35,19 @@ def password_bytes(password):
         encoded = password.encode("utf-8")
     except UnicodeEncodeError:
         return None
-    if not MIN_PASSWORD_BYTES <= len(encoded) <= MAX_PASSWORD_BYTES:
+    if len(password) < 8 or not MIN_PASSWORD_BYTES <= len(encoded) <= MAX_PASSWORD_BYTES:
         return None
     return encoded
+
+
+def password_meets_signup_policy(password: object) -> bool:
+    encoded = password_bytes(password)
+    return encoded is not None and all((
+        any("A" <= char <= "Z" for char in password),
+        any("a" <= char <= "z" for char in password),
+        any("0" <= char <= "9" for char in password),
+        any(char in string.punctuation for char in password),
+    ))
 
 
 def derive_password(password: bytes, salt: bytes, iterations: int) -> bytes:
@@ -56,7 +67,7 @@ class AuthService:
         if username is None:
             return {"success": False, "reason": reasons.INVALID_USERNAME}
         encoded = password_bytes(password)
-        if encoded is None:
+        if not password_meets_signup_policy(password):
             return {"success": False, "reason": reasons.INVALID_PASSWORD}
 
         salt = secrets.token_bytes(16)
@@ -65,7 +76,7 @@ class AuthService:
         )
         # SQLite's unique key also arbitrates simultaneous signup attempts.
         if not self.store.create(account):
-            return {"success": False, "reason": reasons.DUPLICATE_USERNAME}
+            return {"success": False, "reason": reasons.USERNAME_ALREADY_EXISTS}
         return {"success": True, "username": username}
 
     def login(self, username, password):

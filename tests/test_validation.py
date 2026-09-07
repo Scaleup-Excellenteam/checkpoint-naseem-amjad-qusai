@@ -41,9 +41,9 @@ def test_valid_room_values(room):
 
 
 @pytest.mark.parametrize("username,password,reason", [
-    (None, "valid password", "INVALID_USERNAME"),
-    (" ", "valid password", "INVALID_USERNAME"),
-    ("x" * 65, "valid password", "INVALID_USERNAME"),
+    (None, "ValidPassword1!", "INVALID_USERNAME"),
+    (" ", "ValidPassword1!", "INVALID_USERNAME"),
+    ("x" * 65, "ValidPassword1!", "INVALID_USERNAME"),
     ("alice", None, "INVALID_PASSWORD"),
     ("alice", 123, "INVALID_PASSWORD"),
     ("alice", "short", "INVALID_PASSWORD"),
@@ -67,6 +67,6 @@ def test_invalid_login_semantics_always_use_generic_error(username, password):
 
 @pytest.mark.parametrize("validator", [validate_signup, validate_login])
 def test_valid_credential_semantics_do_not_require_account_lookup(validator):
-    result = validator(" alice ", "valid password")
+    result = validator(" alice ", "ValidPassword1!")
     assert result.valid is True
     assert result.reason is None

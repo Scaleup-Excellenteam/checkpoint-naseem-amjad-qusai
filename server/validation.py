@@ -11,10 +11,10 @@ from dataclasses import dataclass
 
 if __package__:
     from . import reason_codes as reasons
-    from .auth import normalize_username, password_bytes
+    from .auth import normalize_username, password_bytes, password_meets_signup_policy
 else:
     import reason_codes as reasons
-    from auth import normalize_username, password_bytes
+    from auth import normalize_username, password_bytes, password_meets_signup_policy
 
 
 MAX_MESSAGE_LENGTH = 4096  # Python string characters, including whitespace.
@@ -30,7 +30,7 @@ class ValidationResult:
 def validate_signup(username: object, password: object) -> ValidationResult:
     if normalize_username(username) is None:
         return ValidationResult(False, reasons.INVALID_USERNAME)
-    if password_bytes(password) is None:
+    if not password_meets_signup_policy(password):
         return ValidationResult(False, reasons.INVALID_PASSWORD)
     return ValidationResult(True)
 

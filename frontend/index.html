@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TSPO — הכניסה לחבורה</title>
+  <link rel="stylesheet" href="./css/styles.css">
+  <script type="module" src="./js/app.js"></script>
+</head>
+<body>
+  <header class="header"><a class="brand" href="#login" aria-label="TSPO — התחברות"><span class="brand-icon" aria-hidden="true">◒</span> TSPO<span class="brand-caption">THE SECRET PIZZA ORGANIZATION</span></a><span class="connection"><span aria-hidden="true"></span>TSPO · סביבת פיתוח</span></header>
+  <details class="server-settings">
+    <summary>חיבור לשרת ובדיקת מצב</summary>
+    <div class="server-settings-body">
+      <label for="server-url">כתובת שרת HTTP</label><input id="server-url" type="url" dir="ltr" placeholder="http://127.0.0.1:8000">
+      <div class="server-actions"><button id="connect-server" class="secondary" type="button">חיבור / חיבור מחדש</button><button id="disconnect-server" class="secondary" type="button" disabled>ניתוק</button><button id="check-health" class="secondary" type="button">בדיקת health</button><a href="#live">למצב האמיתי</a></div>
+      <p id="socket-state" role="status">WebSocket: מנותק</p><p id="health-state" role="status">HTTP: לא נבדק</p><p id="connection-status" role="status"></p>
+      <p>לאחר ניתוק נדרשת כניסה מחדש. בדיקת HTTP תקינה אינה אישור להתחברות לחשבון.</p>
+    </div>
+  </details>
+  <main class="layout">
+    <aside class="story">
+      <span class="eyebrow">לחובבי פיצה. לשיחות טובות.</span>
+      <h1>לכל חבורה יש<br>את <span>הסלייס שלה.</span></h1>
+      <p>המקום של החבורה שלכם לדבר, לשתף ולהיפגש בחדרי צ׳אט. הסוד היחיד שלא שומרים? מי לקח את המשולש האחרון.</p>
+      <div class="pizza-scene" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="pizza"><i></i><i></i><i></i><i></i><i></i><i></i></div><span class="scene-label">GOOD PIZZA. GREAT COMPANY.</span></div>
+      <div class="story-footer"><span>01 / הכניסה לחבורה</span><span>EST. 2026</span></div>
+    </aside>
+    <section class="form-area" aria-label="כניסה לחשבון">
+      <div class="card">
+        <nav class="switcher" aria-label="בחירת מסך"><a href="#login" id="login-link" aria-current="page">התחברות</a><a href="#signup" id="signup-link">הרשמה</a></nav>
+        <section id="login-screen" aria-labelledby="login-title">
+          <span class="eyebrow">WELCOME BACK</span><h2 id="login-title" tabindex="-1">טוב שחזרת.</h2><p class="intro">החבורה מחכה. נכנסים ומתחילים לדבר.</p>
+          <form id="login-form" novalidate>
+            <label for="login-username">שם משתמש</label><input id="login-username" name="username" autocomplete="username" dir="auto" placeholder="שם המשתמש שלך" required aria-describedby="login-username-error"><small class="field-error" id="login-username-error"></small>
+            <label for="login-password">סיסמה</label><div class="password-field"><input id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-password-error"><button type="button" class="reveal" data-password="login-password" aria-label="הצגת סיסמה" aria-pressed="false">הצג</button></div><small class="field-error" id="login-password-error"></small>
+            <p class="notice" id="login-status" role="status" aria-live="polite"></p>
+            <button class="primary" type="submit">התחברות <span aria-hidden="true">←</span></button>
+          </form>
+          <p class="alternate">עוד אין לך חשבון? <a href="#signup">מצטרפים לחבורה</a></p>
+          <a class="preview-link" href="#rooms-preview">לתצוגה מקדימה של החדרים <span aria-hidden="true">←</span></a>
+        </section>
+        <section id="signup-screen" aria-labelledby="signup-title" hidden>
+          <span class="eyebrow">A SEAT AT THE TABLE</span><h2 id="signup-title" tabindex="-1">שמרנו לך מקום.</h2><p class="intro">כמה פרטים, ואתם צעד אחד קרוב יותר לחבורה.</p>
+          <form id="signup-form" novalidate>
+            <label for="signup-username">שם משתמש</label><input id="signup-username" name="username" autocomplete="username" dir="auto" placeholder="איך נקרא לך?" required aria-describedby="signup-username-error"><small class="field-error" id="signup-username-error"></small>
+            <label for="signup-password">סיסמה</label><div class="password-field"><input id="signup-password" name="password" type="password" autocomplete="new-password" required aria-describedby="password-rules signup-password-error"><button type="button" class="reveal" data-password="signup-password" aria-label="הצגת סיסמה" aria-pressed="false">הצג</button></div><small class="field-error" id="signup-password-error"></small>
+            <ul class="password-rules" id="password-rules"><li data-rule="length">לפחות 8 תווים</li><li data-rule="uppercase">אות גדולה באנגלית (A–Z)</li><li data-rule="lowercase">אות קטנה באנגלית (a–z)</li><li data-rule="number">ספרה (0–9)</li><li data-rule="symbol">סימן מיוחד, למשל ! או @</li></ul>
+            <label for="signup-confirm">אימות סיסמה</label><div class="password-field"><input id="signup-confirm" name="confirm" type="password" autocomplete="new-password" required aria-describedby="signup-confirm-error"><button type="button" class="reveal" data-password="signup-confirm" aria-label="הצגת אימות סיסמה" aria-pressed="false">הצג</button></div><small class="field-error" id="signup-confirm-error"></small>
+            <p class="notice" id="signup-status" role="status" aria-live="polite"></p>
+            <button class="primary" type="submit">יצירת חשבון <span aria-hidden="true">←</span></button>
+          </form>
+          <p class="alternate">כבר חלק מהחבורה? <a href="#login">למסך ההתחברות</a></p>
+        </section>
+        <p class="development-note">חיבור חשבונות דורש שרת התומך בחוזה ומאמת סיסמאות. תצוגות הדוגמה נשארות נפרדות מהמצב האמיתי.</p>
+      </div>
+      <footer class="footer">TSPO · פרויקט הצוות · TEL-HAI 2026</footer>
+    </section>
+    <section id="rooms-screen" class="rooms-screen" aria-labelledby="rooms-title" hidden>
+      <div class="rooms-heading">
+        <div><span class="eyebrow">FIND YOUR TABLE</span><h1 id="rooms-title" tabindex="-1">איפה יושבים היום?</h1><p>בחרו חדר, שלחו בקשת הצטרפות והצטרפו לשיחה לאחר אישור השרת.</p></div>
+        <a class="back-link" href="#login">חזרה להתחברות</a>
+      </div>
+      <p class="preview-banner"><strong>תצוגה מקדימה</strong> · שמות החדרים כאן הם דוגמאות בלבד. אין משתמש מחובר ולא נשלחות בקשות לשרת.</p>
+      <div class="rooms-workspace">
+        <div class="rooms-directory">
+          <div class="rooms-toolbar"><div><label for="room-search">חיפוש חדר</label><input id="room-search" type="search" placeholder="חפשו לפי שם או נושא…" autocomplete="off"></div><span id="room-count" role="status" aria-live="polite"></span></div>
+          <fieldset class="room-picker"><legend class="sr-only">בחרו חדר לתצוגה</legend><div id="room-list" class="room-list"></div></fieldset>
+          <div id="rooms-empty" class="empty-state" hidden><h2>לא מצאנו חדר מתאים</h2><p>נסו שם אחר או חזרו לרשימה המלאה.</p><button id="clear-room-search" class="secondary" type="button">ניקוי החיפוש</button></div>
+        </div>
+        <aside class="room-details" aria-labelledby="room-details-title">
+          <span class="eyebrow">החדר שבחרתם</span>
+          <div id="room-selection-empty"><h2 id="room-details-title">לכל שיחה יש מקום.</h2><p>בחרו חדר מהרשימה כדי לראות את הפרטים ולבקש להצטרף.</p></div>
+          <div id="room-selection" hidden><h2 id="selected-room-name"></h2><p id="selected-room-description"></p><dl><dt>מזהה חדר</dt><dd id="selected-room-id" dir="ltr"></dd><dt>מצב חברות</dt><dd>לא הצטרפתם לחדר</dd></dl></div>
+          <button id="join-room" type="button" class="primary" disabled>בקשת הצטרפות <span aria-hidden="true">←</span></button>
+          <button id="preview-chat" type="button" class="secondary preview-chat" disabled>פתיחת צ׳אט לדוגמה</button>
+          <p id="rooms-status" class="notice" role="status" aria-live="polite"></p>
+          <p class="room-help">בחירת חדר אינה מצרפת אתכם אליו. הכניסה לצ׳אט תהיה זמינה רק לאחר אישור הצטרפות מהשרת.</p>
+        </aside>
+      </div>
+    </section>
+    <section id="chat-screen" class="chat-screen" aria-labelledby="chat-title" hidden>
+      <div class="chat-heading">
+        <div><span class="eyebrow">THE CONVERSATION STARTS HERE</span><h1 id="chat-title" tabindex="-1"></h1><p id="chat-topic"></p></div>
+        <a class="secondary leave-chat" href="#rooms-preview">עזיבת התצוגה וחזרה לחדרים</a>
+      </div>
+      <p class="preview-banner"><strong>צ׳אט לדוגמה בלבד</strong> · המשתתפים וההודעות הראשוניות מדומים. ההודעות שלכם מוצגות רק בדפדפן הזה ונמחקות ברענון.</p>
+      <div class="chat-workspace">
+        <div class="conversation">
+          <div class="conversation-bar"><span>השיחה בחדר</span><span class="local-badge">תצוגה מקומית</span></div>
+          <div id="chat-messages" class="chat-messages" role="log" aria-label="הודעות בחדר לדוגמה" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
+          <form id="chat-form" class="chat-composer" novalidate>
+            <label for="chat-content">ההודעה שלכם</label>
+            <textarea id="chat-content" name="content" rows="2" dir="auto" placeholder="מה תרצו לשתף עם החבורה?" aria-describedby="chat-input-help chat-error"></textarea>
+            <p id="chat-error" class="field-error" role="alert"></p>
+            <div class="composer-footer"><span id="chat-input-help">Enter לשליחה · Shift+Enter לשורה חדשה</span><button type="submit" class="primary">שליחה מקומית <span aria-hidden="true">←</span></button></div>
+            <p id="chat-status" class="sr-only" role="status" aria-live="polite"></p>
+          </form>
+        </div>
+        <aside class="chat-sidebar">
+          <div class="members-panel"><span class="eyebrow">AROUND THE TABLE</span><h2>משתתפים לדוגמה <span>3</span></h2><ul class="member-list"><li><span class="avatar">א</span><div><strong>אתם</strong><small>משתמש תצוגה מקומי</small></div></li><li><span class="avatar member-sage">נ</span><div><strong>נועם</strong><small>דמות לדוגמה</small></div></li><li><span class="avatar member-gold">ד</span><div><strong>דנה</strong><small>דמות לדוגמה</small></div></li></ul></div>
+          <div class="security-panel"><h2>איך תיראה הודעה שנחסמה?</h2><p>בחרו תרחיש כדי לראות את ההודעה שתוצג למשתמש. זו הדמיה בלבד, ללא בדיקת תוכן.</p><div class="security-actions"><button class="secondary" type="button" data-security="DLP">דוגמת DLP</button><button class="secondary" type="button" data-security="ANTIBOT">דוגמת Anti-Bot</button></div><p id="chat-security-status" class="notice" role="status" aria-live="polite"></p></div>
+        </aside>
+      </div>
+    </section>
+    <section id="live-screen" class="chat-screen" aria-labelledby="live-title" hidden>
+      <div class="chat-heading"><div><span class="eyebrow">LIVE CONNECTION</span><h1 id="live-title" tabindex="-1">המערכת המחוברת</h1><p id="live-account"></p></div><button id="live-logout" class="secondary" type="button">יציאה וניתוק</button></div>
+      <p id="live-auth-needed" class="notice">נדרשת התחברות לחשבון לפני הצטרפות לחדר או קבלת הודעות. <a href="#login">למסך ההתחברות</a></p>
+      <p id="live-status" class="notice" role="status" aria-live="polite"></p>
+      <div id="live-room-controls" hidden>
+        <p>רשימת חדרים אוטומטית עדיין לא הוגדרה בחוזה. הזינו שם חדר ידוע שהצוות מספק; השרת יבדוק אם הוא קיים.</p>
+        <form id="live-join-form"><label for="live-room-name">שם החדר בשרת</label><input id="live-room-name" list="known-rooms" autocomplete="off" required><datalist id="known-rooms"></datalist><button id="live-join" class="primary" type="submit">בקשת הצטרפות</button></form>
+      </div>
+      <section id="live-conversation" hidden aria-label="צ׳אט מחובר">
+        <div class="conversation-bar"><h2 id="live-room-title"></h2><button id="live-leave" type="button" class="secondary">עזיבת חדר</button></div>
+        <p>רשימת חברים אינה זמינה עד להגדרת עדכוני חברוּת בחוזה.</p>
+        <div id="live-messages" class="chat-messages" role="log" aria-label="הודעות מהשרת" aria-live="polite" tabindex="0"></div>
+        <form id="live-chat-form" class="chat-composer"><label for="live-content">הודעה לחדר</label><textarea id="live-content" rows="3" dir="auto" required></textarea><button id="live-send" type="submit" class="primary">שליחה לשרת</button></form>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

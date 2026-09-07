@@ -12,7 +12,7 @@ from server.dlp import DLPService
 from server.anti_bot import AntiBotService, ReputationResult
 
 
-PASSWORD = "correct horse battery staple"
+PASSWORD = "CorrectHorse1!"
 
 
 class FakeSocket:
@@ -54,7 +54,22 @@ def credentials(kind="LOGIN", username="alice", password=PASSWORD, request_id="r
 
 
 def run_socket(*messages, address=None):
-    socket = FakeSocket(messages)
+    normalized = []
+    usernames = set()
+    for message in messages:
+        if isinstance(message, dict):
+            message = dict(message)
+            data = message.get("data")
+            if message.get("type") == "LOGIN" and isinstance(data, dict):
+                username = data.get("username")
+                if isinstance(username, str):
+                    usernames.add(username.strip())
+            if message.get("type") == "CHAT_MESSAGE" and isinstance(data, dict):
+                message["data"] = {"room": "pizza", **data}
+        normalized.append(message)
+    for username in usernames:
+        server.rooms["pizza"].add_member(username)
+    socket = FakeSocket(normalized)
     socket.client = SimpleNamespace(host=address) if address is not None else None
     asyncio.run(server.websocket_endpoint(socket))
     assert socket not in server.manager.active_connections
@@ -86,7 +101,9 @@ def test_successful_login_maps_identity_and_ignores_client_sender(auth):
     assert socket.sent[0] == {"type": "LOGIN_RESULT", "request_id": "req-1",
                               "data": {"success": True, "username": "alice"}}
     assert socket.sent[1] == {"type": "NEW_MESSAGE",
-                              "data": {"sender": "alice", "content": "hello"}}
+                              "request_id": None,
+                              "data": {"sender": "alice", "room": "pizza",
+                                       "content": "hello"}}
 
 
 def test_duplicate_signup_is_account_based_after_disconnect(auth):
@@ -94,7 +111,7 @@ def test_duplicate_signup_is_account_based_after_disconnect(auth):
     assert not server.manager.active_connections
     socket = run_socket(credentials("SIGNUP", request_id="duplicate"))
     assert socket.sent[0] == {"type": "SIGNUP_RESULT", "request_id": "duplicate",
-                              "data": {"success": False, "reason": "DUPLICATE_USERNAME"}}
+                              "data": {"success": False, "reason": "USERNAME_ALREADY_EXISTS"}}
 
 
 def test_existing_active_login_does_not_replace_credential_verification(auth):
@@ -102,7 +119,9 @@ def test_existing_active_login_does_not_replace_credential_verification(auth):
     existing = FakeSocket([])
     server.manager.set_username(existing, "alice")
     socket = run_socket(credentials())
-    assert socket.sent[0]["data"]["success"] is True
+    assert socket.sent[0]["data"] == {
+        "success": False, "reason": "USERNAME_ALREADY_CONNECTED"
+    }
     assert server.manager.get_username(existing) == "alice"
 
 
@@ -127,15 +146,22 @@ def test_invalid_request_id_does_not_create_account(auth, request_id):
 @pytest.mark.parametrize("data", [None, [], {"username": 123, "password": []}])
 def test_malformed_login_data_fails_without_authentication(auth, data):
     socket = run_socket({"type": "LOGIN", "request_id": "bad", "data": data})
-    assert socket.sent[0] == {"type": "LOGIN_RESULT", "request_id": "bad",
-                              "data": {"success": False, "reason": "INVALID_CREDENTIALS"}}
+    if isinstance(data, list):
+        assert socket.sent[0]["type"] == "ERROR"
+        assert socket.sent[0]["data"]["reason"] == "INVALID_MESSAGE"
+    else:
+        assert socket.sent[0] == {"type": "LOGIN_RESULT", "request_id": "bad",
+                                  "data": {"success": False, "reason": "INVALID_CREDENTIALS"}}
     assert socket.identities == [None]
 
 
 def test_health_counts_all_connections(auth):
     anonymous, authenticated = FakeSocket([]), FakeSocket([])
     server.manager.active_connections.update({anonymous: None, authenticated: "alice"})
-    assert asyncio.run(server.health()) == {"status": "ok", "connected_clients": 2}
+    assert asyncio.run(server.health()) == {
+        "status": "ok", "connected_clients": 2,
+        "rooms": {"pizza": 0, "football": 0},
+    }
 
 
 def test_authentication_does_not_log_or_return_password_material(auth, capsys):
@@ -154,7 +180,7 @@ def test_authentication_does_not_log_or_return_password_material(auth, capsys):
     ({"content": 123}, "INVALID_MESSAGE"),
     ({"content": []}, "INVALID_MESSAGE"),
     ({"content": None}, "INVALID_MESSAGE"),
-    (None, "INVALID_MESSAGE"),
+    (None, "MISSING_FIELD"),
     ([], "INVALID_MESSAGE"),
     ({"content": "x" * 4097}, "MESSAGE_TOO_LONG"),
 ])
@@ -180,19 +206,22 @@ def test_chat_preserves_content_and_uses_only_server_identity(auth):
         "content": content, "sender": "mallory", "username": "mallory", "user_id": "mallory"
     }})
     assert socket.sent[1] == {"type": "NEW_MESSAGE",
-                              "data": {"sender": "alice", "content": content}}
+                              "request_id": None,
+                              "data": {"sender": "alice", "room": "pizza",
+                                       "content": content.strip()}}
 
 
-def test_spoofed_identity_cannot_authorize_chat_and_broadcast_is_not_called(auth, monkeypatch):
-    async def forbidden_broadcast(message):
-        pytest.fail("Unauthenticated chat reached broadcast")
+def test_spoofed_identity_cannot_authorize_chat_and_delivery_is_not_called(auth, monkeypatch):
+    async def forbidden_delivery(usernames, message):
+        pytest.fail("Unauthenticated chat reached delivery")
 
-    monkeypatch.setattr(server.manager, "broadcast", forbidden_broadcast)
+    monkeypatch.setattr(server.manager, "send_to_users", forbidden_delivery)
     socket = run_socket({"type": "CHAT_MESSAGE", "data": {
         "content": "hello", "sender": "alice", "username": "alice", "user_id": "alice"
     }})
-    assert socket.sent == [{"type": "ERROR", "request_id": None,
-                            "data": {"reason": "NOT_AUTHENTICATED"}}]
+    assert socket.sent[0]["type"] == "ERROR"
+    assert socket.sent[0]["request_id"] is None
+    assert socket.sent[0]["data"]["reason"] == "NOT_AUTHENTICATED"
     assert socket.identities == [None]
 
 
@@ -212,15 +241,16 @@ def test_dlp_block_prevents_delivery_returns_correlated_result_and_logs_safely(
     auth.signup("alice", PASSWORD)
     monkeypatch.setattr(server, "dlp_service", DLPService([lambda text: marker in text]))
 
-    async def forbidden_broadcast(message):
-        pytest.fail("DLP-blocked content reached broadcast")
+    async def forbidden_delivery(usernames, message):
+        pytest.fail("DLP-blocked content reached delivery")
 
-    monkeypatch.setattr(server.manager, "broadcast", forbidden_broadcast)
+    monkeypatch.setattr(server.manager, "send_to_users", forbidden_delivery)
     with caplog.at_level(logging.INFO, logger="tspo.security"):
         socket = run_socket(credentials(), {"type": "CHAT_MESSAGE", "request_id": "blocked-1",
                             "data": {"content": marker, "sender": "mallory"}})
     assert socket.sent[1:] == [{"type": "MESSAGE_RESULT", "request_id": "blocked-1",
-                               "data": {"success": False, "reason": "DLP_SENSITIVE_CONTENT"}}]
+                               "data": {"success": False, "decision": "BLOCK",
+                                        "reason": "DLP_SENSITIVE_CONTENT", "room": "pizza"}}]
     record, = [r for r in caplog.records if getattr(r, "security_event", None) == "dlp"]
     assert record.decision == "BLOCK"
     assert record.reason == "DLP_SENSITIVE_CONTENT"
@@ -248,12 +278,14 @@ def test_allowed_correlated_chat_broadcasts_then_acknowledges(auth, monkeypatch,
     with caplog.at_level(logging.INFO, logger="tspo.security"):
         socket = run_socket(credentials(), {"type": "CHAT_MESSAGE", "request_id": "allowed-1",
                             "data": {"content": content, "sender": "mallory", "username": "mallory"}})
-    assert seen == [content]
+    assert seen == [content.strip()]
     assert socket.sent[1:] == [
-        {"type": "NEW_MESSAGE", "data": {"sender": "alice", "content": content}},
-        {"type": "MESSAGE_RESULT", "request_id": "allowed-1", "data": {"success": True}},
+        {"type": "NEW_MESSAGE", "request_id": None,
+         "data": {"sender": "alice", "room": "pizza", "content": content.strip()}},
+        {"type": "MESSAGE_RESULT", "request_id": "allowed-1",
+         "data": {"success": True, "room": "pizza", "recipients": 1}},
     ]
-    assert observer.sent == [socket.sent[1]]
+    assert observer.sent == []
     record, = [r for r in caplog.records if getattr(r, "security_event", None) == "dlp"]
     assert record.decision == "ALLOW"
     assert record.verdict == "clean"
@@ -289,7 +321,7 @@ def test_authentication_authorization_validation_dlp_delivery_order(auth, monkey
     original_login = auth.login
     original_authorize = server.authorize
     original_validate = server.validate_chat_message
-    original_broadcast = server.manager.broadcast
+    original_delivery = server.manager.send_to_users
 
     def login(username, password):
         result = original_login(username, password)
@@ -310,15 +342,15 @@ def test_authentication_authorization_validation_dlp_delivery_order(auth, monkey
         events.append("dlp")
         return False
 
-    async def broadcast(message):
+    async def deliver(usernames, message):
         events.append("delivery")
-        await original_broadcast(message)
+        return await original_delivery(usernames, message)
 
     monkeypatch.setattr(auth, "login", login)
     monkeypatch.setattr(server, "authorize", authorize)
     monkeypatch.setattr(server, "validate_chat_message", validate)
     monkeypatch.setattr(server, "dlp_service", DLPService([detector]))
-    monkeypatch.setattr(server.manager, "broadcast", broadcast)
+    monkeypatch.setattr(server.manager, "send_to_users", deliver)
     run_socket(credentials(), {"type": "CHAT_MESSAGE", "data": {"content": "hello"}})
     assert events == ["authentication", "authorization", "semantic_validation", "dlp", "delivery"]
 
@@ -336,7 +368,8 @@ def test_blocked_chat_can_be_followed_by_allowed_chat(auth, monkeypatch):
     ]
     assert socket.sent[1]["data"]["success"] is False
     assert socket.sent[-1] == {"type": "MESSAGE_RESULT", "request_id": "allow",
-                               "data": {"success": True}}
+                               "data": {"success": True, "room": "pizza",
+                                        "recipients": 1}}
 
 
 class SyntheticReputationProvider:
@@ -361,11 +394,11 @@ def test_malicious_peer_blocks_delivery_and_dlp_using_trusted_address(
     def forbidden_detector(content):
         pytest.fail("Malicious peer reached DLP")
 
-    async def forbidden_broadcast(message):
-        pytest.fail("Malicious peer reached broadcast")
+    async def forbidden_delivery(usernames, message):
+        pytest.fail("Malicious peer reached delivery")
 
     monkeypatch.setattr(server, "dlp_service", DLPService([forbidden_detector]))
-    monkeypatch.setattr(server.manager, "broadcast", forbidden_broadcast)
+    monkeypatch.setattr(server.manager, "send_to_users", forbidden_delivery)
     content = "SENSITIVE_REPUTATION_TEST_CONTENT"
     with caplog.at_level(logging.INFO, logger="tspo.security"):
         socket = run_socket(credentials(), {
@@ -377,7 +410,8 @@ def test_malicious_peer_blocks_delivery_and_dlp_using_trusted_address(
     assert provider.seen == ["server-peer"]
     assert socket.sent[1:] == [{
         "type": "MESSAGE_RESULT", "request_id": "reputation-block",
-        "data": {"success": False, "reason": "MALICIOUS_ADDRESS"},
+        "data": {"success": False, "decision": "BLOCK",
+                 "reason": "MALICIOUS_ADDRESS", "room": "pizza"},
     }]
     assert all(message["type"] != "NEW_MESSAGE" for message in socket.sent)
     record, = [r for r in caplog.records if r.name == "tspo.security"]
@@ -411,10 +445,12 @@ def test_clean_peer_reaches_dlp_and_delivery_with_server_identity(auth, monkeypa
                      "username": "mallory", "sender": "mallory", "user_id": "mallory"},
         }, address="server-peer")
     assert provider.seen == ["server-peer"]
-    assert seen == ["  hello  "]
+    assert seen == ["hello"]
     assert socket.sent[1:] == [
-        {"type": "NEW_MESSAGE", "data": {"sender": "alice", "content": "  hello  "}},
-        {"type": "MESSAGE_RESULT", "request_id": "clean-peer", "data": {"success": True}},
+        {"type": "NEW_MESSAGE", "request_id": None,
+         "data": {"sender": "alice", "room": "pizza", "content": "hello"}},
+        {"type": "MESSAGE_RESULT", "request_id": "clean-peer",
+         "data": {"success": True, "room": "pizza", "recipients": 1}},
     ]
     records = [r for r in caplog.records if r.name == "tspo.security"]
     assert [r.security_event for r in records] == ["anti_bot", "dlp"]
@@ -467,7 +503,7 @@ def test_combined_pipeline_order_and_one_reputation_check_per_chat(auth, monkeyp
     original_login = auth.login
     original_authorize = server.authorize
     original_validate = server.validate_chat_message
-    original_broadcast = server.manager.broadcast
+    original_delivery = server.manager.send_to_users
 
     def login(username, password):
         result = original_login(username, password)
@@ -493,16 +529,16 @@ def test_combined_pipeline_order_and_one_reputation_check_per_chat(auth, monkeyp
         events.append("dlp")
         return False
 
-    async def broadcast(message):
+    async def deliver(usernames, message):
         events.append("delivery")
-        await original_broadcast(message)
+        return await original_delivery(usernames, message)
 
     monkeypatch.setattr(auth, "login", login)
     monkeypatch.setattr(server, "authorize", authorize)
     monkeypatch.setattr(server, "validate_chat_message", validate)
     monkeypatch.setattr(server, "anti_bot_service", AntiBotService(SimpleNamespace(check=check)))
     monkeypatch.setattr(server, "dlp_service", DLPService([detector]))
-    monkeypatch.setattr(server.manager, "broadcast", broadcast)
+    monkeypatch.setattr(server.manager, "send_to_users", deliver)
     run_socket(credentials(),
                {"type": "CHAT_MESSAGE", "data": {"content": "first"}},
                {"type": "CHAT_MESSAGE", "data": {"content": "second"}}, address="server-peer")
@@ -520,13 +556,12 @@ def test_non_object_json_does_not_crash_handler_and_connection_can_continue(auth
         {"type": "CHAT_MESSAGE", "request_id": "after-malformed",
          "data": {"content": "hello"}},
     )
-    assert socket.sent[0] == {
-        "type": "ERROR", "request_id": None,
-        "data": {"reason": "INVALID_MESSAGE"},
-    }
+    assert socket.sent[0]["type"] == "ERROR"
+    assert socket.sent[0]["request_id"] is None
+    assert socket.sent[0]["data"]["reason"] == "INVALID_MESSAGE"
     assert socket.sent[-1] == {
         "type": "MESSAGE_RESULT", "request_id": "after-malformed",
-        "data": {"success": True},
+        "data": {"success": True, "room": "pizza", "recipients": 1},
     }
 
 
@@ -538,39 +573,38 @@ def test_invalid_json_does_not_crash_handler_and_connection_can_continue(auth):
         {"type": "CHAT_MESSAGE", "request_id": "after-invalid-json",
          "data": {"content": "hello"}},
     )
-    assert socket.sent[0] == {
-        "type": "ERROR", "request_id": None,
-        "data": {"reason": "INVALID_MESSAGE"},
-    }
+    assert socket.sent[0]["type"] == "ERROR"
+    assert socket.sent[0]["request_id"] is None
+    assert socket.sent[0]["data"]["reason"] == "INVALID_MESSAGE"
     assert socket.sent[-1] == {
         "type": "MESSAGE_RESULT", "request_id": "after-invalid-json",
-        "data": {"success": True},
+        "data": {"success": True, "room": "pizza", "recipients": 1},
     }
 
 
 def test_error_responses_echo_valid_request_id(auth):
     anonymous = run_socket({"type": "CHAT_MESSAGE", "request_id": "anonymous-request",
                             "data": {"content": "hello"}})
-    assert anonymous.sent == [{
-        "type": "ERROR", "request_id": "anonymous-request",
-        "data": {"reason": "NOT_AUTHENTICATED"},
-    }]
+    assert anonymous.sent[0]["type"] == "ERROR"
+    assert anonymous.sent[0]["request_id"] == "anonymous-request"
+    assert anonymous.sent[0]["data"]["reason"] == "NOT_AUTHENTICATED"
     auth.signup("alice", PASSWORD)
     invalid = run_socket(credentials(), {"type": "CHAT_MESSAGE", "request_id": "invalid-request",
                                          "data": {"content": " "}})
-    assert invalid.sent[-1] == {
-        "type": "ERROR", "request_id": "invalid-request",
-        "data": {"reason": "EMPTY_MESSAGE"},
-    }
+    assert invalid.sent[-1]["type"] == "ERROR"
+    assert invalid.sent[-1]["request_id"] == "invalid-request"
+    assert invalid.sent[-1]["data"]["reason"] == "EMPTY_MESSAGE"
 
 
 def test_socket_without_client_host_keeps_security_pipeline_available(auth):
     auth.signup("alice", PASSWORD)
     # A real server supplies `client.host`; missing metadata must not crash security.
     socket = FakeSocket([credentials(), {"type": "CHAT_MESSAGE", "request_id": "no-host",
-                                          "data": {"content": "hello"}}])
+                                          "data": {"room": "pizza", "content": "hello"}}])
     socket.client = object()
+    server.rooms["pizza"].add_member("alice")
     asyncio.run(server.websocket_endpoint(socket))
     assert socket.sent[-1] == {
-        "type": "MESSAGE_RESULT", "request_id": "no-host", "data": {"success": True}
+        "type": "MESSAGE_RESULT", "request_id": "no-host",
+        "data": {"success": True, "room": "pizza", "recipients": 1}
     }
