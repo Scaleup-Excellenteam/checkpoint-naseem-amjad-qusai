@@ -14,6 +14,8 @@ class SecurityDecision:
     decision: Decision
     reason: str | None = None
     verdict: str | None = None
+    category: str | None = None
+    score: float | None = None
 
     def __post_init__(self):
         if not isinstance(self.decision, Decision):

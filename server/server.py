@@ -12,6 +12,7 @@ if __package__:
     from .security_decision import Decision
     from .anti_bot import AntiBotService
     from .security_pipeline import SecurityPipeline
+    from .embedding_dlp import RecipeEmbeddingDetector
     from . import reason_codes as reasons
 else:
     from accounts import AccountStore
@@ -22,6 +23,7 @@ else:
     from security_decision import Decision
     from anti_bot import AntiBotService
     from security_pipeline import SecurityPipeline
+    from embedding_dlp import RecipeEmbeddingDetector
     import reason_codes as reasons
 
 app = FastAPI()
@@ -60,7 +62,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 auth_service = AuthService(AccountStore(Path(__file__).with_name("accounts.sqlite3")))
 # No production detectors until the Day-2 DLP rules are supplied.
-dlp_service = DLPService()
+try:
+    dlp_service = DLPService([RecipeEmbeddingDetector()])
+except RuntimeError:
+    # Deployment installs the model dependency; keep offline tests importable.
+    dlp_service = DLPService()
 # Neutral until production reputation requirements are supplied.
 anti_bot_service = AntiBotService()
 

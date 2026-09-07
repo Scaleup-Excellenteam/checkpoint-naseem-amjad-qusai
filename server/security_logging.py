@@ -33,5 +33,9 @@ def _log_decision(event: str, result: SecurityDecision, username: str | None,
     }
     if event == "anti_bot":
         fields["address"] = address
+    if result.category is not None:
+        fields["category"] = result.category
+    if result.score is not None:
+        fields["score"] = round(result.score, 6)
     level = logging.WARNING if result.decision is Decision.BLOCK else logging.INFO
     logger.log(level, json.dumps(fields), extra=fields)
