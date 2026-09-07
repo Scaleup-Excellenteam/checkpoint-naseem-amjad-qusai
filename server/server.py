@@ -181,12 +181,11 @@ except RuntimeError:
 virustotal_api_key = os.environ.get("VIRUSTOTAL_API_KEY")
 if virustotal_api_key:
     virustotal_threshold = int(os.environ.get("TSPO_VT_MALICIOUS_THRESHOLD", "1"))
-    anti_bot_service = AntiBotService(
-        VirusTotalReputationProvider(
-            virustotal_api_key,
-            malicious_threshold=virustotal_threshold,
-        )
+    virustotal_provider = VirusTotalReputationProvider(
+        virustotal_api_key,
+        malicious_threshold=virustotal_threshold,
     )
+    anti_bot_service = AntiBotService(virustotal_provider, virustotal_provider)
 else:
     anti_bot_service = AntiBotService()
 

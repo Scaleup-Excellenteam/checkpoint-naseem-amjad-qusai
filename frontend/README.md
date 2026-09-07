@@ -15,8 +15,8 @@ Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` fro
 ## Modes and backend compatibility
 
 - Login and signup validate input and are wired to Contract v1 requests.
-- Public preview links use only fictional rooms, members and local messages. They do not grant authentication or membership.
-- `/#live` is the real connection view. It requires successful login before room access; entering its URL does not authenticate a user.
+- Successful login opens the real room catalog returned by the server. The login screen no longer links to the old fictional preview.
+- `/#live` requires successful login before room access; entering its URL does not authenticate a user.
 - The integrated Python server implements signup, password login, request IDs, the `pizza` and `football` rooms, room routing and message acknowledgments. `authenticationReady` is enabled in `js/config.js`, so the live UI sends credentials according to Contract v1.
 - The server settings panel allows independent WebSocket connection and HTTP /health checks. Health is a point-in-time check, not continuous monitoring or proof of a logged-in session.
 
@@ -24,13 +24,13 @@ Open http://127.0.0.1:8000. FastAPI serves the website, `/health`, and `/ws` fro
 
 `js/config.js` contains the default server URL, 10-second request timeout, authentication readiness, optional agreed room names and optional maximum message length. The UI lets users change the server URL while disconnected. HTTPS URLs map to WSS. No URL, password or session is saved in browser storage.
 
-After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_LIST` response. The server returns room names, member counts, and the requesting user's joined state without exposing member usernames. The `/health` room map remains available for a public status check, but it does not grant authentication or membership. The frontend and server both enforce a 4096-character message limit.
+After login the frontend sends `LIST_ROOMS` and validates the correlated `ROOMS_LIST` response. The server returns room names, member counts, and the requesting user's joined state without exposing member usernames. Those real rooms are rendered as cards with a join action. The `/health` room map remains available for a public status check, but it does not grant authentication or membership. The frontend and server both enforce a 4096-character message limit.
 
 The normal integrated setup uses one origin, so CORS is not involved. The backend also allows GET `/health` from `http://127.0.0.1:5500` and `http://localhost:5500` for standalone frontend development. Set `TSPO_FRONTEND_ORIGINS` to a comma-separated origin list when using another development origin.
 
 ### VirusTotal address reputation
 
-Anti-Bot can use the VirusTotal API v3 to check the server-derived public IP address of a WebSocket client. Keep the API key outside the repository and export it before starting the server:
+Anti-Bot can use the VirusTotal API v3 to check both the server-derived public IP address of a WebSocket client and HTTP(S) URLs found in a chat message. Keep the API key outside the repository and export it before starting the server:
 
 ```sh
 read -rsp "VirusTotal API key: " VIRUSTOTAL_API_KEY; echo
@@ -39,7 +39,9 @@ export TSPO_VT_MALICIOUS_THRESHOLD=1
 uvicorn server.server:app --host 0.0.0.0 --port 8000
 ```
 
-The key is sent only in VirusTotal's `x-apikey` header. Results are cached for 15 minutes to conserve the public API quota. Private, loopback and other non-public addresses are skipped, so a local WSL/LAN test normally records `virustotal_non_public_address`. API errors and quota failures record `virustotal_unavailable` and do not crash or block chat without evidence. If the environment variable is absent, the existing neutral `reputation_not_configured` verdict remains in use.
+The key is sent only in VirusTotal's `x-apikey` header. Results are cached for 15 minutes to conserve the public API quota. Private, loopback and other non-public addresses are skipped, so a local WSL/LAN test normally records `virustotal_non_public_address` for the peer while public URLs in its messages are still checked. A URL report with enough malicious detections blocks the message with the existing `MALICIOUS_ADDRESS` Contract reason before DLP or room delivery. URL text and query parameters are sent to VirusTotal for the report lookup but are never written to the security log.
+
+The chat path reads existing VirusTotal URL reports and does not submit unknown URLs for a new public scan. A missing report, API error, or quota failure is recorded as incomplete evidence and does not falsely label the URL malicious. If `VIRUSTOTAL_API_KEY` is absent, the existing neutral unconfigured verdicts remain in use.
 
 ## Real request flow
 
@@ -74,7 +76,7 @@ Covers out-of-order responses, legacy login rejection, DLP errors, room catalog 
 
 For a repeatable browser test, open http://127.0.0.1:8000/tests/integration.html. A red TEST FIXTURE banner identifies the isolated simulated backend. The fixture changes authenticationReady in memory only and makes no real WebSocket connections. Connect using the panel, then use demo / Demo123!, join pizza or team, send text, send BLOCK for a simulated DLP rejection, leave and disconnect. Registration is in-memory only. This fixture verifies UI integration; it does not validate the team's real server. Do not deploy the tests directory as a production application.
 
-Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, preview room filtering, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
+Also verify empty fields, mismatched passwords, signup return-to-login, narrow screens, live room cards, literal HTML in messages, room isolation and navigation. The Google font has a local fallback.
 
 ## Remaining team work
 
