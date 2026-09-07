@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>TSPO integration fixture</title>
+<body><p>Loading isolated test fixture…</p><script type="module">
+// Reproducible browser-only fixture. No network authentication or persistent accounts.
+import { config } from '../js/config.js';
+config.authenticationReady = true;
+config.rooms = ['pizza', 'team'];
+const markup = await (await fetch('../index.html')).text();
+const source = new DOMParser().parseFromString(markup, 'text/html');
+document.documentElement.lang = 'he'; document.documentElement.dir = 'rtl';
+document.body.replaceChildren(...source.body.childNodes);
+const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '../css/styles.css'; document.head.append(style);
+const banner = document.createElement('p');
+banner.textContent = 'TEST FIXTURE ONLY — simulated server. Login: demo / Demo123! · Rooms: pizza, team · Message BLOCK tests DLP.';
+banner.style.cssText = 'background:#ffe3e3;padding:20px;direction:ltr;font-weight:bold';
+document.body.prepend(banner);
+const accounts = new Map([['demo', 'Demo123!']]);
+class FixtureSocket {
+  constructor() { this.closed = false; setTimeout(() => this.onopen?.(), 50); }
+  close() { this.closed = true; this.onclose?.(); }
+  send(raw) {
+    const request = JSON.parse(raw);
+    const { type, request_id, data } = request;
+    const names = { SIGNUP:'SIGNUP_RESULT', LOGIN:'LOGIN_RESULT', JOIN_ROOM:'JOIN_ROOM_RESULT', LEAVE_ROOM:'LEAVE_ROOM_RESULT', CHAT_MESSAGE:'MESSAGE_RESULT' };
+    let result = { success: true };
+    if (type === 'SIGNUP') {
+      if (accounts.has(data.username)) result = { success:false, reason:'USERNAME_ALREADY_EXISTS' };
+      else accounts.set(data.username, data.password);
+    } else if (type === 'LOGIN') {
+      if (accounts.get(data.username) !== data.password) result = { success:false, reason:'INVALID_CREDENTIALS' };
+      else this.user = data.username;
+    } else if (!this.user) result = { success:false, reason:'NOT_AUTHENTICATED' };
+    else if (type === 'JOIN_ROOM') {
+      if (!config.rooms.includes(data.room)) result = { success:false, reason:'ROOM_NOT_FOUND' };
+      else { this.room = data.room; result.room = data.room; }
+    } else if (type === 'LEAVE_ROOM') { result.room = data.room; this.room = null; }
+    else if (type === 'CHAT_MESSAGE') {
+      if (data.room !== this.room) result = { success:false, reason:'NOT_IN_ROOM' };
+      else if (data.content === 'BLOCK') result = { success:false, reason:'DLP_SENSITIVE_CONTENT', decision:'BLOCK' };
+    }
+    setTimeout(() => {
+      if (this.closed) return;
+      this.onmessage?.({ data: JSON.stringify({ type:names[type], request_id, data:result }) });
+      if (type === 'CHAT_MESSAGE' && result.success) this.onmessage?.({ data:JSON.stringify({ type:'NEW_MESSAGE', request_id:null, data:{ sender:this.user, room:this.room, content:data.content } }) });
+    }, 250);
+  }
+}
+globalThis.WebSocket = FixtureSocket;
+await import('../js/app.js');
+</script></body></html>
