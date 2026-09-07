@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from pathlib import Path
 
@@ -33,6 +34,29 @@ except ImportError:  # when launched as "uvicorn server.server:app"
     from server.embedding_dlp import RecipeEmbeddingDetector
     from server.virustotal import VirusTotalReputationProvider
     from server import reason_codes as reasons
+
+LOG_LEVEL = os.environ.get("TSPO_LOG_LEVEL", "INFO").upper()
+
+
+def configure_logging(level: str = LOG_LEVEL) -> None:
+    """Configure logging once, at application startup.
+
+    Without this the root logger has no handler, so its default WARNING
+    level silently discards every INFO record - including the ALLOW
+    decisions emitted by security_logging.
+    """
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
+    )
+    # basicConfig() is a no-op once a handler exists (uvicorn or pytest may
+    # install one first), so set the level explicitly either way.
+    logging.getLogger().setLevel(level)
+
+
+configure_logging()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 frontend_origins = [
@@ -101,7 +125,13 @@ class ConnectionManager:
                 await websocket.send_json(message)
                 delivered += 1
             except Exception:
-                # broken socket: clean it up, keep delivering to the rest
+                # Broken socket: clean it up, keep delivering to the rest.
+                # Metadata only - `message` carries chat content and must
+                # never reach the logs.
+                logger.warning(
+                    "Delivery failed, dropping connection for user=%s",
+                    username, exc_info=True,
+                )
                 self.disconnect(websocket)
 
         return delivered
@@ -210,7 +240,15 @@ async def handle_authentication(
                 }
             else:
                 manager.set_username(websocket, username)
-                print(f"{username} logged in")
+                logger.info("%s logged in", username)
+        elif message_type == "SIGNUP" and result["success"]:
+            logger.info("Account created for %s", result["username"])
+
+    if not result["success"]:
+        # The reason code only. The client-supplied username is not echoed
+        # into the log on failure.
+        logger.warning("%s rejected reason=%s", message_type,
+                       result.get("reason"))
 
     await manager.send(
         websocket,
@@ -243,7 +281,7 @@ async def handle_join_room(websocket: WebSocket, request_id, data: dict):
                 "User must be logged in before joining a room",
             ),
         )
-        print("Rejected JOIN_ROOM from an unauthenticated connection")
+        logger.warning("Rejected JOIN_ROOM from an unauthenticated connection")
         return
 
     room_name = clean_room_name(data)
@@ -305,7 +343,7 @@ async def handle_join_room(websocket: WebSocket, request_id, data: dict):
         },
     )
 
-    print(f"{username} joined room {room.name}")
+    logger.info("%s joined room %s", username, room.name)
 
 
 async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
@@ -321,7 +359,7 @@ async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
                 "User must be logged in before leaving a room",
             ),
         )
-        print("Rejected LEAVE_ROOM from an unauthenticated connection")
+        logger.warning("Rejected LEAVE_ROOM from an unauthenticated connection")
         return
 
     room_name = clean_room_name(data)
@@ -386,7 +424,7 @@ async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
         },
     )
 
-    print(f"{username} left room {room.name}")
+    logger.info("%s left room %s", username, room.name)
 
 
 async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
@@ -410,7 +448,7 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
                 "User must be logged in before sending a message",
             ),
         )
-        print("Rejected CHAT_MESSAGE from an unauthenticated connection")
+        logger.warning("Rejected CHAT_MESSAGE from an unauthenticated connection")
         return
 
     # 2. the target room must be present, a string, and not blank
@@ -458,9 +496,9 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
                 },
             },
         )
-        print(
-            f"{username} tried to send to room {room.name} "
-            f"without being a member"
+        logger.warning(
+            "%s tried to send to room %s without being a member",
+            username, room.name,
         )
         return
 
@@ -488,6 +526,12 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         username,
     )
     if security_result.decision is Decision.BLOCK:
+        # Metadata only. security_logging already records the full decision;
+        # this adds the room, which that layer does not receive.
+        logger.warning(
+            "Security BLOCK user=%s room=%s reason=%s",
+            username, room.name, security_result.reason,
+        )
         await manager.send(
             websocket,
             {
@@ -522,9 +566,11 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
     #    message back: the server is the source of truth for the chat log.
     delivered = await manager.send_to_users(recipients, outgoing_message)
 
-    print(
-        f"{username} sent message to room {room.name} "
-        f"({delivered} recipient(s))"
+    # Routing metadata only: sender, room and recipient count. The
+    # message content is deliberately absent.
+    logger.info(
+        "Message routed user=%s room=%s recipients=%d",
+        username, room.name, delivered,
     )
 
     if request_id is not None:
@@ -573,7 +619,7 @@ async def handle_list_rooms(websocket: WebSocket, request_id, data: dict):
             "data": {"rooms": room_list},
         },
     )
-    print(f"{username} listed {len(room_list)} room(s)")
+    logger.info("%s listed %d room(s)", username, len(room_list))
 
 
 HANDLERS = {
@@ -617,22 +663,22 @@ def cleanup_connection(websocket: WebSocket):
     manager.disconnect(websocket)
 
     if username is None:
-        print("Unknown client disconnected")
+        logger.info("Unknown client disconnected")
         return
 
     left = leave_all_rooms(username)
 
     if left:
-        print(f"{username} removed from rooms: {', '.join(left)}")
+        logger.info("%s removed from rooms: %s", username, ", ".join(left))
 
-    print(f"{username} disconnected")
+    logger.info("%s disconnected", username)
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
 
-    print("New WebSocket connection")
+    logger.info("New WebSocket connection")
 
     try:
         while True:
@@ -644,7 +690,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     websocket,
                     error_message(None, "INVALID_MESSAGE", "Malformed JSON"),
                 )
-                print("Rejected malformed JSON")
+                logger.warning("Rejected malformed JSON")
                 continue
 
             # --- envelope validation ---
@@ -657,7 +703,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "A message must be a JSON object",
                     ),
                 )
-                print("Rejected a non-object message")
+                logger.warning("Rejected a non-object message")
                 continue
 
             request_id = message.get("request_id")
@@ -673,7 +719,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "Field 'type' is required and must be a string",
                     ),
                 )
-                print("Rejected a message with a missing/invalid type")
+                logger.warning("Rejected a message with a missing/invalid type")
                 continue
 
             message_type = message_type.strip()
@@ -691,7 +737,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         "Field 'data' must be a JSON object",
                     ),
                 )
-                print(f"Rejected {message_type} with a non-object data field")
+                logger.warning("Rejected %s with a non-object data field", message_type)
                 continue
 
             # --- dispatch ---
@@ -706,7 +752,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         f"Unsupported message type: {message_type}",
                     ),
                 )
-                print(f"Unknown message type received: {message_type}")
+                logger.warning("Unknown message type received: %s", message_type)
                 continue
 
             username = manager.get_username(websocket)
@@ -719,9 +765,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         f"You must be logged in to use {message_type}",
                     ),
                 )
-                print(
-                    f"Rejected {message_type} from an "
-                    "unauthenticated connection"
+                logger.warning(
+                    "Rejected %s from an unauthenticated connection",
+                    message_type,
                 )
                 continue
 
@@ -729,6 +775,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         pass
+    except Exception:
+        # Make an unexpected failure visible, then propagate exactly as
+        # before. Tracebacks do not include local variables, so no message
+        # content is exposed.
+        logger.exception(
+            "Unhandled error on WebSocket connection for user=%s",
+            manager.get_username(websocket),
+        )
+        raise
     finally:
         cleanup_connection(websocket)
 
