@@ -1,3 +1,5 @@
+import json
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 try:
@@ -32,13 +34,47 @@ class ConnectionManager:
     async def send(self, websocket: WebSocket, message: dict):
         await websocket.send_json(message)
 
-    async def broadcast(self, message: dict):
+    async def send_to_users(self, usernames, message: dict) -> int:
+        """Send `message` only to the connections owned by `usernames`.
+
+        This is the room-targeted delivery primitive: Room objects hold
+        usernames, so the manager is the only place that has to know which
+        WebSocket belongs to whom.
+
+        - unauthenticated connections (username is None) are skipped
+        - a recipient whose socket already died is dropped and does not
+          break delivery for the remaining recipients
+        - iteration happens over a snapshot, because a failed send calls
+          disconnect() and mutates active_connections
+
+        Returns how many sockets actually received the message.
+        """
+        targets = set(usernames)
+        delivered = 0
+
         for websocket, username in list(self.active_connections.items()):
-            if username is not None:
-                try:
-                    await websocket.send_json(message)
-                except Exception:
-                    self.disconnect(websocket)
+            if username is None or username not in targets:
+                continue
+
+            try:
+                await websocket.send_json(message)
+                delivered += 1
+            except Exception:
+                # broken socket: clean it up, keep delivering to the rest
+                self.disconnect(websocket)
+
+        return delivered
+
+    async def broadcast(self, message: dict):
+        """Send to every authenticated connection.
+
+        Kept for server-wide announcements. Normal room chat must use
+        send_to_users() so messages never leak across rooms.
+        """
+        await self.send_to_users(
+            [u for u in self.active_connections.values() if u is not None],
+            message,
+        )
 
 
 manager = ConnectionManager()
@@ -51,21 +87,448 @@ rooms = {
 
 
 def leave_all_rooms(username: str):
-    """Remove the user from every room. Returns the room left, if any."""
-    left = None
+    """Remove the user from every room. Returns the rooms actually left."""
+    left = []
     for room in rooms.values():
         if room.has_member(username):
             room.remove_member(username)
-            left = room
+            left.append(room.name)
     return left
 
+
+# ----------------------------------------------------------------------
+# protocol helpers
+# ----------------------------------------------------------------------
+
+def error_message(request_id, reason: str, message: str = None) -> dict:
+    """Build an ERROR frame. request_id is echoed back so the client can
+    match the failure to the request that caused it."""
+    data = {"reason": reason}
+    if message:
+        data["message"] = message
+
+    return {
+        "type": "ERROR",
+        "request_id": request_id,
+        "data": data,
+    }
+
+
+def clean_room_name(data: dict):
+    """Return the stripped room name, or None if the field is missing,
+    not a string, or blank."""
+    room_name = data.get("room")
+
+    if not isinstance(room_name, str) or not room_name.strip():
+        return None
+
+    return room_name.strip()
+
+
+# ----------------------------------------------------------------------
+# message handlers
+# ----------------------------------------------------------------------
+
+async def handle_login(websocket: WebSocket, request_id, data: dict):
+    """Associates a username with this WebSocket.
+
+    NOTE: real credential checking / signup persistence belongs to the
+    Auth teammate. This only does the connection <-> username binding
+    the realtime layer needs.
+    """
+    username = data.get("username")
+
+    # type check before .strip(): a non-string username must not crash
+    if not isinstance(username, str) or not username.strip():
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "INVALID_USERNAME",
+                "A valid username is required",
+            ),
+        )
+        return
+
+    username = username.strip()
+
+    if manager.username_exists(username):
+        await manager.send(
+            websocket,
+            {
+                "type": "LOGIN_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "USERNAME_ALREADY_CONNECTED",
+                },
+            },
+        )
+        return
+
+    manager.set_username(websocket, username)
+
+    await manager.send(
+        websocket,
+        {
+            "type": "LOGIN_RESULT",
+            "request_id": request_id,
+            "data": {
+                "success": True,
+                "username": username,
+            },
+        },
+    )
+
+    print(f"{username} logged in")
+
+
+async def handle_join_room(websocket: WebSocket, request_id, data: dict):
+    username = manager.get_username(websocket)
+
+    if username is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "NOT_AUTHENTICATED",
+                "User must be logged in before joining a room",
+            ),
+        )
+        print("Rejected JOIN_ROOM from an unauthenticated connection")
+        return
+
+    room_name = clean_room_name(data)
+
+    # missing, wrong type, or blank
+    if room_name is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "MISSING_FIELD",
+                "A valid room name is required",
+            ),
+        )
+        return
+
+    room = rooms.get(room_name)
+
+    if room is None:
+        await manager.send(
+            websocket,
+            {
+                "type": "JOIN_ROOM_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "ROOM_NOT_FOUND",
+                },
+            },
+        )
+        return
+
+    if room.has_member(username):
+        await manager.send(
+            websocket,
+            {
+                "type": "JOIN_ROOM_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "ALREADY_IN_ROOM",
+                    "room": room.name,
+                },
+            },
+        )
+        return
+
+    room.add_member(username)
+
+    await manager.send(
+        websocket,
+        {
+            "type": "JOIN_ROOM_RESULT",
+            "request_id": request_id,
+            "data": {
+                "success": True,
+                "room": room.name,
+            },
+        },
+    )
+
+    print(f"{username} joined room {room.name}")
+
+
+async def handle_leave_room(websocket: WebSocket, request_id, data: dict):
+    username = manager.get_username(websocket)
+
+    # User must be logged in
+    if username is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "NOT_AUTHENTICATED",
+                "User must be logged in before leaving a room",
+            ),
+        )
+        print("Rejected LEAVE_ROOM from an unauthenticated connection")
+        return
+
+    room_name = clean_room_name(data)
+
+    # Missing, wrong type, or blank room name
+    if room_name is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "MISSING_FIELD",
+                "A valid room name is required",
+            ),
+        )
+        return
+
+    room = rooms.get(room_name)
+
+    # Room does not exist
+    if room is None:
+        await manager.send(
+            websocket,
+            {
+                "type": "LEAVE_ROOM_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "ROOM_NOT_FOUND",
+                },
+            },
+        )
+        return
+
+    # User is not a member of this room
+    if not room.has_member(username):
+        await manager.send(
+            websocket,
+            {
+                "type": "LEAVE_ROOM_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "NOT_IN_ROOM",
+                    "room": room.name,
+                },
+            },
+        )
+        return
+
+    # Remove the user from this room only. Other memberships are untouched.
+    room.remove_member(username)
+
+    await manager.send(
+        websocket,
+        {
+            "type": "LEAVE_ROOM_RESULT",
+            "request_id": request_id,
+            "data": {
+                "success": True,
+                "room": room.name,
+            },
+        },
+    )
+
+    print(f"{username} left room {room.name}")
+
+
+async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
+    """Route one chat message to the members of one room.
+
+    Failure convention follows JOIN_ROOM / LEAVE_ROOM:
+      - protocol/auth problems      -> ERROR
+      - room-level outcomes         -> MESSAGE_RESULT with success=False
+    """
+    # 1. the sender is decided by the server, never by the client.
+    #    data["sender"] is ignored on purpose.
+    username = manager.get_username(websocket)
+
+    if username is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "NOT_AUTHENTICATED",
+                "User must be logged in before sending a message",
+            ),
+        )
+        print("Rejected CHAT_MESSAGE from an unauthenticated connection")
+        return
+
+    # 2. the target room must be present, a string, and not blank
+    room_name = clean_room_name(data)
+
+    if room_name is None:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "MISSING_FIELD",
+                "A valid room name is required",
+            ),
+        )
+        return
+
+    room = rooms.get(room_name)
+
+    if room is None:
+        await manager.send(
+            websocket,
+            {
+                "type": "MESSAGE_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "ROOM_NOT_FOUND",
+                    "room": room_name,
+                },
+            },
+        )
+        return
+
+    # 3. you may only talk in a room you actually joined
+    if not room.has_member(username):
+        await manager.send(
+            websocket,
+            {
+                "type": "MESSAGE_RESULT",
+                "request_id": request_id,
+                "data": {
+                    "success": False,
+                    "reason": "NOT_IN_ROOM",
+                    "room": room.name,
+                },
+            },
+        )
+        print(
+            f"{username} tried to send to room {room.name} "
+            f"without being a member"
+        )
+        return
+
+    # 4. content: type-check BEFORE calling .strip()
+    content = data.get("content")
+
+    if not isinstance(content, str) or not content.strip():
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                "EMPTY_MESSAGE",
+                "Message content must be a non-empty string",
+            ),
+        )
+        return
+
+    content = content.strip()
+
+    # ------------------------------------------------------------------
+    # SECURITY INTEGRATION POINT  (owned by the Auth / Security teammate)
+    #
+    # At this line the message is fully validated and the sender is
+    # authenticated, and NOTHING has been delivered yet. The DLP /
+    # Anti-Bot / URL-reputation ALLOW-BLOCK check goes exactly here,
+    # e.g.:
+    #
+    #     decision = security.inspect(sender=username,
+    #                                 room=room.name,
+    #                                 content=content)
+    #     if not decision.allowed:
+    #         -> MESSAGE_RESULT success=False, reason=decision.reason
+    #         return
+    #
+    # No security component exists in the repository yet, so no check is
+    # performed and the server does NOT claim this message was scanned.
+    # ------------------------------------------------------------------
+
+    # 5. build the server-authored frame. The sender is the server's value.
+    outgoing_message = {
+        "type": "NEW_MESSAGE",
+        "request_id": None,
+        "data": {
+            "sender": username,
+            "room": room.name,
+            "content": content,
+        },
+    }
+
+    # 6. recipients = this room's members only (a copy, so a disconnect
+    #    during delivery cannot mutate what we are iterating)
+    recipients = room.get_members()
+
+    # 7. targeted delivery. The sender is a member, so they get their own
+    #    message back: the server is the source of truth for the chat log.
+    delivered = await manager.send_to_users(recipients, outgoing_message)
+
+    print(
+        f"{username} sent message to room {room.name} "
+        f"({delivered} recipient(s))"
+    )
+
+    await manager.send(
+        websocket,
+        {
+            "type": "MESSAGE_RESULT",
+            "request_id": request_id,
+            "data": {
+                "success": True,
+                "room": room.name,
+                "recipients": delivered,
+            },
+        },
+    )
+
+
+HANDLERS = {
+    "LOGIN": handle_login,
+    "JOIN_ROOM": handle_join_room,
+    "LEAVE_ROOM": handle_leave_room,
+    "CHAT_MESSAGE": handle_chat_message,
+}
+
+
+# ----------------------------------------------------------------------
+# endpoints
+# ----------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
-        "connected_clients": len(manager.active_connections)
+        "connected_clients": len(manager.active_connections),
+        "rooms": {name: len(room.members) for name, room in rooms.items()},
     }
+
+
+def cleanup_connection(websocket: WebSocket):
+    """Drop a connection and every room membership it owned.
+
+    Runs in a finally block so it also covers an unexpected error, not
+    only a clean WebSocketDisconnect.
+    """
+    username = manager.get_username(websocket)
+
+    manager.disconnect(websocket)
+
+    if username is None:
+        print("Unknown client disconnected")
+        return
+
+    left = leave_all_rooms(username)
+
+    if left:
+        print(f"{username} removed from rooms: {', '.join(left)}")
+
+    print(f"{username} disconnected")
 
 
 @app.websocket("/ws")
@@ -76,224 +539,97 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            message = await websocket.receive_json()
+            # --- receive: a malformed frame must never kill the server ---
+            try:
+                raw = await websocket.receive_text()
+            except (KeyError, TypeError):
+                # a non-text frame (e.g. binary) is not part of protocol V1
+                await manager.send(
+                    websocket,
+                    error_message(
+                        None,
+                        "INVALID_MESSAGE",
+                        "Only JSON text frames are supported",
+                    ),
+                )
+                print("Rejected a non-text frame")
+                continue
 
-            message_type = message.get("type")
+            try:
+                message = json.loads(raw)
+            except ValueError:
+                await manager.send(
+                    websocket,
+                    error_message(None, "INVALID_MESSAGE", "Malformed JSON"),
+                )
+                print("Rejected malformed JSON")
+                continue
+
+            # --- envelope validation ---
+            if not isinstance(message, dict):
+                await manager.send(
+                    websocket,
+                    error_message(
+                        None,
+                        "INVALID_MESSAGE",
+                        "A message must be a JSON object",
+                    ),
+                )
+                print("Rejected a non-object message")
+                continue
+
             request_id = message.get("request_id")
-            data = message.get("data", {})
+            message_type = message.get("type")
+            data = message.get("data")
 
-            # LOGIN
-            if message_type == "LOGIN":
-                username = data.get("username", "").strip()
-
-                if not username:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "data": {
-                                "reason": "INVALID_USERNAME"
-                            }
-                        }
-                    )
-                    continue
-
-                if manager.username_exists(username):
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "LOGIN_RESULT",
-                            "data": {
-                                "success": False,
-                                "reason": "USERNAME_ALREADY_CONNECTED"
-                            }
-                        }
-                    )
-                    continue
-
-                manager.set_username(websocket, username)
-
+            if not isinstance(message_type, str) or not message_type.strip():
                 await manager.send(
                     websocket,
-                    {
-                        "type": "LOGIN_RESULT",
-                        "data": {
-                            "success": True,
-                            "username": username
-                        }
-                    }
+                    error_message(
+                        request_id,
+                        "INVALID_MESSAGE",
+                        "Field 'type' is required and must be a string",
+                    ),
                 )
+                print("Rejected a message with a missing/invalid type")
+                continue
 
-                print(f"{username} logged in")
+            message_type = message_type.strip()
 
-            # JOIN_ROOM
-            elif message_type == "JOIN_ROOM":
+            # "data" is optional, but if present it must be an object
+            if data is None:
+                data = {}
 
-                username = manager.get_username(websocket)
-
-                if username is None:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "request_id": request_id,
-                            "data": {
-                                "reason": "NOT_AUTHENTICATED",
-                                "message": "User must be logged in "
-                                           "before joining a room"
-                            }
-                        }
-                    )
-                    continue
-
-                room_name = data.get("room")
-
-                # missing, wrong type, or blank
-                if not isinstance(room_name, str) or not room_name.strip():
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "request_id": request_id,
-                            "data": {
-                                "reason": "MISSING_FIELD",
-                                "message": "A valid room name is required"
-                            }
-                        }
-                    )
-                    continue
-
-                room_name = room_name.strip()
-                room = rooms.get(room_name)
-
-                if room is None:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "JOIN_ROOM_RESULT",
-                            "request_id": request_id,
-                            "data": {
-                                "success": False,
-                                "reason": "ROOM_NOT_FOUND"
-                            }
-                        }
-                    )
-                    continue
-
-                if room.has_member(username):
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "JOIN_ROOM_RESULT",
-                            "request_id": request_id,
-                            "data": {
-                                "success": False,
-                                "reason": "ALREADY_IN_ROOM",
-                                "room": room.name
-                            }
-                        }
-                    )
-                    continue
-
-                room.add_member(username)
-
+            if not isinstance(data, dict):
                 await manager.send(
                     websocket,
-                    {
-                        "type": "JOIN_ROOM_RESULT",
-                        "request_id": request_id,
-                        "data": {
-                            "success": True,
-                            "room": room.name
-                        }
-                    }
+                    error_message(
+                        request_id,
+                        "INVALID_MESSAGE",
+                        "Field 'data' must be a JSON object",
+                    ),
                 )
+                print(f"Rejected {message_type} with a non-object data field")
+                continue
 
-                print(f"{username} joined room {room.name}")
+            # --- dispatch ---
+            handler = HANDLERS.get(message_type)
 
-
-            elif message_type == "LEAVE_ROOM":
-
-                username = manager.get_username(websocket)
-                if username is None:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "request_id": request_id,
-                            "data": {
-                                "reason": "NOT_AUTHENTICATED",
-                                "message": "User must be logged in "
-                                           "before leaving a room"
-                            }
-                        }
-                    )
-                    continue
-
-            # CHAT
-            elif message_type == "CHAT_MESSAGE":
-
-                username = manager.get_username(websocket)
-
-                if username is None:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "data": {
-                                "reason": "NOT_AUTHENTICATED"
-                            }
-                        }
-                    )
-                    continue
-
-                content = data.get("content", "").strip()
-
-                if not content:
-                    await manager.send(
-                        websocket,
-                        {
-                            "type": "ERROR",
-                            "data": {
-                                "reason": "EMPTY_MESSAGE"
-                            }
-                        }
-                    )
-                    continue
-
-                print(f"{username}: {content}")
-
-                # Server adds the sender.
-                # We do NOT trust a sender field from the client.
-                outgoing_message = {
-                    "type": "NEW_MESSAGE",
-                    "data": {
-                        "sender": username,
-                        "content": content
-                    }
-                }
-
-                await manager.broadcast(outgoing_message)
-                
-
-            else:
+            if handler is None:
                 await manager.send(
                     websocket,
-                    {
-                        "type": "ERROR",
-                        "data": {
-                            "reason": "UNKNOWN_MESSAGE_TYPE"
-                        }
-                    }
+                    error_message(
+                        request_id,
+                        "UNKNOWN_MESSAGE_TYPE",
+                        f"Unsupported message type: {message_type}",
+                    ),
                 )
+                print(f"Unknown message type received: {message_type}")
+                continue
+
+            await handler(websocket, request_id, data)
 
     except WebSocketDisconnect:
-        username = manager.get_username(websocket)
-
-        manager.disconnect(websocket)
-
-        if username:
-            leave_all_rooms(username)
-            print(f"{username} disconnected")
-        else:
-            print("Unknown client disconnected")
+        pass
+    finally:
+        cleanup_connection(websocket)
