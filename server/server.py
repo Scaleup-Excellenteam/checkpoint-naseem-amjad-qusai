@@ -9,6 +9,10 @@ from fastapi.staticfiles import StaticFiles
 
 try:
     from room import Room
+    import database
+    from room_store import RoomStore
+    from message_store import MessageStore
+    from security_store import SecurityEventStore
     from accounts import AccountStore
     from auth import AuthService
     from authorization import authorize
@@ -23,6 +27,10 @@ try:
 
 except ImportError:  # when launched as "uvicorn server.server:app"
     from server.room import Room
+    from server import database
+    from server.room_store import RoomStore
+    from server.message_store import MessageStore
+    from server.security_store import SecurityEventStore
     from server.accounts import AccountStore
     from server.auth import AuthService
     from server.authorization import authorize
@@ -149,7 +157,22 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-auth_service = AuthService(AccountStore(Path(__file__).with_name("accounts.sqlite3")))
+
+# One SQLite file holds accounts, rooms, messages and security events.
+# The schema is created once here, not on every database operation.
+# TSPO_DATABASE_PATH lets the test suite (and any throwaway run) point at a
+# different file, so nothing but a real server touches the developer's copy.
+DATABASE_PATH = Path(
+    os.environ.get("TSPO_DATABASE_PATH")
+    or Path(__file__).with_name("accounts.sqlite3")
+)
+database.initialize_schema(DATABASE_PATH)
+
+auth_service = AuthService(AccountStore(DATABASE_PATH))
+room_store = RoomStore(DATABASE_PATH)
+message_store = MessageStore(DATABASE_PATH)
+security_store = SecurityEventStore(DATABASE_PATH)
+
 try:
     dlp_service = DLPService([RecipeEmbeddingDetector()])
 except RuntimeError:
@@ -167,11 +190,48 @@ if virustotal_api_key:
 else:
     anti_bot_service = AntiBotService()
 
-# room name -> Room
-rooms = {
-    "pizza": Room("pizza"),
-    "football": Room("football"),
-}
+DEFAULT_ROOMS = ("pizza", "football")
+
+
+def load_rooms(store) -> dict:
+    """Rebuild the in-memory room registry from persistent storage.
+
+    Only room *definitions* are loaded. Membership is live connection state,
+    so every room starts empty on boot and after a restart.
+    """
+    return {name: Room(name) for name in store.all_names()}
+
+
+# The built-in rooms are persisted once, then the runtime dict is loaded from
+# the database. `rooms` remains the live state the handlers work with.
+room_store.ensure_defaults(DEFAULT_ROOMS)
+rooms = load_rooms(room_store)
+
+
+def record_security_event(event, result, username, address=None):
+    """Persist one security decision.
+
+    SecurityPipeline calls this for every stage, so persistence happens
+    whether or not a log record is emitted: it does not depend on the
+    logger's level. Metadata only - message content is never passed in, and
+    security_events has no column for it. A storage failure is logged and
+    swallowed so it can never change a security outcome.
+    """
+    try:
+        security_store.record(
+            event=event,
+            decision=result.decision.value,
+            username=username,
+            reason=result.reason,
+            verdict=result.verdict,
+            category=result.category,
+            score=None if result.score is None else round(result.score, 6),
+        )
+    except Exception:
+        logger.warning(
+            "Could not persist security event event=%s user=%s",
+            event, username, exc_info=True,
+        )
 
 
 def leave_all_rooms(username: str):
@@ -520,7 +580,9 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
     client = getattr(websocket, "client", None)
     address = getattr(client, "host", None)
     security_result = await asyncio.to_thread(
-        SecurityPipeline(anti_bot_service, dlp_service).evaluate,
+        SecurityPipeline(
+            anti_bot_service, dlp_service, on_decision=record_security_event
+        ).evaluate,
         content,
         address,
         username,
@@ -547,7 +609,30 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         )
         return
 
-    # 5. build the server-authored frame. The sender is the server's value.
+    # 5. persist. Reached only after Decision.ALLOW: the BLOCK branch above
+    #    returned, so blocked content has no path into the database. Storage
+    #    happens before delivery and gates it: if the archive rejects the
+    #    message, nobody receives it.
+    try:
+        await asyncio.to_thread(message_store.add, room.name, username, content)
+    except Exception:
+        # Traceback and safe metadata for us; the client is told only that
+        # the server failed. Delivery is abandoned rather than sending a
+        # message the archive never recorded.
+        logger.exception(
+            "Could not persist message user=%s room=%s", username, room.name,
+        )
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                reasons.INTERNAL_SERVER_ERROR,
+                "The message could not be stored and was not delivered",
+            ),
+        )
+        return
+
+    # 6. build the server-authored frame. The sender is the server's value.
     outgoing_message = {
         "type": "NEW_MESSAGE",
         "request_id": None,
@@ -558,11 +643,11 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         },
     }
 
-    # 6. recipients = this room's members only (a copy, so a disconnect
+    # 7. recipients = this room's members only (a copy, so a disconnect
     #    during delivery cannot mutate what we are iterating)
     recipients = room.get_members()
 
-    # 7. targeted delivery. The sender is a member, so they get their own
+    # 8. targeted delivery. The sender is a member, so they get their own
     #    message back: the server is the source of truth for the chat log.
     delivered = await manager.send_to_users(recipients, outgoing_message)
 

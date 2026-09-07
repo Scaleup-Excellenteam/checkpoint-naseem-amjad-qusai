@@ -73,6 +73,11 @@ def test_other_room_does_not_receive_the_message(client):
 
         chat(a, "football", "football-only")
 
+        # Drain the sender's own frames first. qusai is a member of football
+        # too, so leaving his copies unread stalls delivery to the others.
+        a.receive_json()   # qusai's own NEW_MESSAGE
+        a.receive_json()   # qusai's MESSAGE_RESULT
+
         # naseem's very first message is the football one -> he never got
         # the pizza message
         received = c.receive_json()
