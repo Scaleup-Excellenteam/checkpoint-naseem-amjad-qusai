@@ -128,6 +128,20 @@ export function setupLive() {
     byId('live-rooms-empty').hidden = knownRooms.size !== 0;
   }
   renderKnownRooms();
+  // LIST_ROOMS is the single room catalog: login and CREATE_ROOM both refresh
+  // from it rather than guessing what the server now holds.
+  async function loadRoomCatalog() {
+    const catalog = await socket.request('LIST_ROOMS', {});
+    if (!catalog.rooms.every((item) => item && typeof item.name === 'string'
+      && item.name.trim() && Number.isInteger(item.members) && item.members >= 0
+      && typeof item.joined === 'boolean')) {
+      socket.fail('CONTRACT_MISMATCH');
+      throw new ConnectionError('CONTRACT_MISMATCH');
+    }
+    knownRooms.clear();
+    catalog.rooms.forEach((item) => knownRooms.set(item.name, { ...item }));
+    renderKnownRooms();
+  }
   async function action(button, operation) {
     if (actionPending) return;
     actionPending = true; button.disabled = true; status.textContent = 'ממתין לתשובת השרת…';
@@ -158,6 +172,22 @@ export function setupLive() {
         : 'השרת אישר את ההצטרפות לחדר.';
     });
   }
+  byId('live-create-room').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = byId('live-room-name').value.trim();
+    if (!name) { status.textContent = 'יש להזין שם חדר.'; return; }
+    action(byId('live-create'), async (token) => {
+      if (!user) throw new ConnectionError('NOT_AUTHENTICATED');
+      const result = await socket.request('CREATE_ROOM', { name });
+      if (result.room !== name) { socket.fail('CONTRACT_MISMATCH'); throw new ConnectionError('CONTRACT_MISMATCH'); }
+      if (token !== generation) return;
+      // The server decides what exists; re-read the catalog instead of
+      // inserting the room locally. Creating does not join it.
+      await loadRoomCatalog();
+      byId('live-room-name').value = '';
+      status.textContent = `השרת אישר את יצירת החדר „${result.room}”. עדיין לא הצטרפתם אליו.`;
+    });
+  });
   byId('live-leave').addEventListener('click', () => action(byId('live-leave'), async (token) => {
     const target = room;
     const result = await socket.request('LEAVE_ROOM', { room: target });
@@ -206,15 +236,7 @@ export function setupLive() {
             throw new ConnectionError('CONTRACT_MISMATCH');
           }
           const confirmedUsername = result.username;
-          const catalog = await socket.request('LIST_ROOMS', {});
-          if (!catalog.rooms.every((item) => item && typeof item.name === 'string'
-            && item.name.trim() && Number.isInteger(item.members) && item.members >= 0
-            && typeof item.joined === 'boolean')) {
-            socket.fail('CONTRACT_MISMATCH');
-            throw new ConnectionError('CONTRACT_MISMATCH');
-          }
-          knownRooms.clear();
-          catalog.rooms.forEach((item) => knownRooms.set(item.name, { ...item }));
+          await loadRoomCatalog();
           user = confirmedUsername;
           renderKnownRooms();
           update();

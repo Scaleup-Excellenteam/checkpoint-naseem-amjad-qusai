@@ -35,6 +35,10 @@ def clean_state(database_path, monkeypatch):
     for room in rooms.values():
         room.members.clear()
 
+    # CREATE_ROOM adds entries to the same module-level dict, so the registry
+    # itself - not just membership - has to be restored between tests.
+    baseline_rooms = set(rooms)
+
     # Point every store at the temporary database. These are resolved from
     # module globals at call time, so monkeypatching redirects the server.
     monkeypatch.setattr(
@@ -51,6 +55,8 @@ def clean_state(database_path, monkeypatch):
     yield
 
     manager.active_connections.clear()
+    for name in set(rooms) - baseline_rooms:
+        del rooms[name]
     for room in rooms.values():
         room.members.clear()
 
@@ -104,5 +110,14 @@ def list_rooms(ws, request_id="rooms-1"):
         "type": "LIST_ROOMS",
         "request_id": request_id,
         "data": {},
+    })
+    return ws.receive_json()
+
+
+def create_room(ws, name, request_id="create-1"):
+    ws.send_json({
+        "type": "CREATE_ROOM",
+        "request_id": request_id,
+        "data": {"name": name},
     })
     return ws.receive_json()

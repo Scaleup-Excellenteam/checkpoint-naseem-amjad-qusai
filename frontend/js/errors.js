@@ -13,6 +13,8 @@ const messages = {
   INVALID_USERNAME: 'שם המשתמש אינו תקין.',
   INVALID_PASSWORD: 'הסיסמה אינה עומדת בדרישות השרת.',
   ROOM_NOT_FOUND: 'החדר לא נמצא.', ALREADY_IN_ROOM: 'אתם כבר חברים בחדר.',
+  ROOM_ALREADY_EXISTS: 'כבר קיים חדר בשם הזה. בחרו שם אחר.',
+  INVALID_ROOM_NAME: 'שם החדר אינו תקין: עד 30 תווים, אותיות באנגלית, ספרות, _ או - בלבד.',
   NOT_IN_ROOM: 'אינכם חברים בחדר הזה.', EMPTY_MESSAGE: 'לא ניתן לשלוח הודעה ריקה.',
   MESSAGE_TOO_LONG: 'ההודעה ארוכה מהמותר בשרת.',
   DLP_SENSITIVE_CONTENT: 'ההודעה נחסמה בגלל מידע רגיש.',

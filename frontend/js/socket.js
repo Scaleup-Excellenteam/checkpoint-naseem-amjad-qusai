@@ -1,7 +1,7 @@
 const replies = {
   SIGNUP: 'SIGNUP_RESULT', LOGIN: 'LOGIN_RESULT', JOIN_ROOM: 'JOIN_ROOM_RESULT',
   LEAVE_ROOM: 'LEAVE_ROOM_RESULT', CHAT_MESSAGE: 'MESSAGE_RESULT',
-  LIST_ROOMS: 'ROOMS_LIST',
+  LIST_ROOMS: 'ROOMS_LIST', CREATE_ROOM: 'CREATE_ROOM_RESULT',
 };
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 

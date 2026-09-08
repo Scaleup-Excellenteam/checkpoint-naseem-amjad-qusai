@@ -16,7 +16,7 @@ try:
     from accounts import AccountStore
     from auth import AuthService
     from authorization import authorize
-    from validation import validate_chat_message
+    from validation import validate_chat_message, validate_room_name
     from dlp import DLPService
     from security_decision import Decision
     from anti_bot import AntiBotService
@@ -34,7 +34,7 @@ except ImportError:  # when launched as "uvicorn server.server:app"
     from server.accounts import AccountStore
     from server.auth import AuthService
     from server.authorization import authorize
-    from server.validation import validate_chat_message
+    from server.validation import validate_chat_message, validate_room_name
     from server.dlp import DLPService
     from server.security_decision import Decision
     from server.anti_bot import AntiBotService
@@ -672,6 +672,96 @@ async def handle_chat_message(websocket: WebSocket, request_id, data: dict):
         )
 
 
+async def handle_create_room(websocket: WebSocket, request_id, data: dict):
+    """Create one new room: validate, reject duplicates, persist, then publish.
+
+    The order matters. The room only becomes visible to LIST_ROOMS after the
+    database has accepted it, so a room the server offers is always a room
+    that survives a restart. Creating does not join: membership stays a
+    separate JOIN_ROOM decision.
+    """
+    username = manager.get_username(websocket)
+
+    authorization = authorize("CREATE_ROOM", username)
+    if not authorization.allowed:
+        await manager.send(
+            websocket,
+            error_message(
+                request_id,
+                authorization.reason,
+                "User must be logged in before creating a room",
+            ),
+        )
+        logger.warning("Rejected CREATE_ROOM from an unauthenticated connection")
+        return
+
+    async def refuse(reason: str):
+        await manager.send(
+            websocket,
+            {
+                "type": "CREATE_ROOM_RESULT",
+                "request_id": request_id,
+                "data": {"success": False, "reason": reason},
+            },
+        )
+
+    # Stripping is the only transformation applied; the validated string is
+    # the one stored, so the client gets back the name it will have to use.
+    name = data.get("name")
+    if isinstance(name, str):
+        name = name.strip()
+
+    validation = validate_room_name(name)
+    if not validation.valid:
+        # The rejected name is not echoed into the log: it is unvalidated
+        # client input.
+        logger.warning("Rejected CREATE_ROOM from user=%s reason=%s",
+                       username, validation.reason)
+        await refuse(validation.reason)
+        return
+
+    if name in rooms:
+        logger.info("CREATE_ROOM refused user=%s room=%s reason=%s",
+                    username, name, reasons.ROOM_ALREADY_EXISTS)
+        await refuse(reasons.ROOM_ALREADY_EXISTS)
+        return
+
+    # Persist first. A failure here must leave no trace in memory.
+    try:
+        created = await asyncio.to_thread(room_store.create, name, username)
+    except Exception:
+        # Traceback and safe metadata for us; the client learns only that the
+        # server failed - never the SQLite error or the database location.
+        logger.exception(
+            "Could not persist room user=%s room=%s", username, name,
+        )
+        await refuse(reasons.INTERNAL_SERVER_ERROR)
+        return
+
+    if not created:
+        # The PRIMARY KEY refused the insert: the row already existed even
+        # though the runtime dict did not know about it. Nothing is
+        # overwritten, and the room is not adopted into memory on this path.
+        logger.info("CREATE_ROOM refused user=%s room=%s reason=%s",
+                    username, name, reasons.ROOM_ALREADY_EXISTS)
+        await refuse(reasons.ROOM_ALREADY_EXISTS)
+        return
+
+    # Only now does the room exist for JOIN_ROOM, LIST_ROOMS and routing.
+    rooms[name] = Room(name)
+
+    await manager.send(
+        websocket,
+        {
+            "type": "CREATE_ROOM_RESULT",
+            "request_id": request_id,
+            "data": {"success": True, "room": name},
+        },
+    )
+
+    logger.info("Room created user=%s room=%s", username, name)
+
+
 async def handle_list_rooms(websocket: WebSocket, request_id, data: dict):
     """Return the server room catalog without exposing member identities."""
     username = manager.get_username(websocket)
@@ -713,6 +803,7 @@ HANDLERS = {
     "LEAVE_ROOM": handle_leave_room,
     "CHAT_MESSAGE": handle_chat_message,
     "LIST_ROOMS": handle_list_rooms,
+    "CREATE_ROOM": handle_create_room,
 }
 
 AUTH_REQUIRED_TYPES = {
@@ -720,6 +811,7 @@ AUTH_REQUIRED_TYPES = {
     "LEAVE_ROOM",
     "CHAT_MESSAGE",
     "LIST_ROOMS",
+    "CREATE_ROOM",
 }
 
 

@@ -107,6 +107,11 @@
       <p id="live-status" class="notice" role="status" aria-live="polite"></p>
       <div id="live-room-controls" hidden>
         <div class="live-rooms-heading"><div><span class="eyebrow">AVAILABLE ROOMS</span><h2>החדרים בשרת</h2><p>בחרו חדר ושלחו בקשת הצטרפות.</p></div><span id="live-room-count" role="status" aria-live="polite"></span></div>
+        <form id="live-create-room" class="live-create-room" novalidate>
+          <div><label for="live-room-name">שם חדר חדש</label><input id="live-room-name" name="room-name" dir="ltr" maxlength="30" autocomplete="off" placeholder="gaming" aria-describedby="live-room-name-help"></div>
+          <button id="live-create" class="secondary" type="submit">יצירת חדר</button>
+          <p id="live-room-name-help">עד 30 תווים: אותיות באנגלית, ספרות, _ או -. יצירת חדר אינה מצרפת אתכם אליו.</p>
+        </form>
         <div id="live-room-list" class="room-list" aria-label="חדרים זמינים"></div>
         <div id="live-rooms-empty" class="empty-state" hidden><h2>אין חדרים זמינים</h2><p>השרת לא החזיר חדרים שאפשר להצטרף אליהם.</p></div>
       </div>

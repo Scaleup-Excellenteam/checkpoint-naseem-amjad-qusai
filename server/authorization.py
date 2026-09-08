@@ -23,7 +23,8 @@ def authorize(action: str, authenticated_username: str | None) -> AuthorizationR
         if authenticated_username is not None:
             return AuthorizationResult(False, reasons.ALREADY_AUTHENTICATED)
         return AuthorizationResult(True)
-    if action in ("JOIN_ROOM", "LEAVE_ROOM", "CHAT_MESSAGE", "LIST_ROOMS"):
+    if action in ("JOIN_ROOM", "LEAVE_ROOM", "CHAT_MESSAGE", "LIST_ROOMS",
+                  "CREATE_ROOM"):
         if authenticated_username is None:
             return AuthorizationResult(False, reasons.NOT_AUTHENTICATED)
         return AuthorizationResult(True)

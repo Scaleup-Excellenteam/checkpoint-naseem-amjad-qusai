@@ -85,3 +85,22 @@ test('room catalog response resolves LIST_ROOMS without a success field', async 
   assert.deepEqual(await result, { rooms: [{ name: 'pizza', members: 2, joined: true }] });
   client.disconnect();
 });
+
+test('CREATE_ROOM resolves on success and rejects with the server reason', async () => {
+  const { client, wire } = connected();
+  const created = client.request('CREATE_ROOM', { name: 'gaming' });
+  assert.equal(wire.sent[0].type, 'CREATE_ROOM');
+  wire.reply({
+    type: 'CREATE_ROOM_RESULT', request_id: wire.sent[0].request_id,
+    data: { success: true, room: 'gaming' },
+  });
+  assert.deepEqual(await created, { success: true, room: 'gaming' });
+
+  const duplicate = client.request('CREATE_ROOM', { name: 'gaming' });
+  wire.reply({
+    type: 'CREATE_ROOM_RESULT', request_id: wire.sent[1].request_id,
+    data: { success: false, reason: 'ROOM_ALREADY_EXISTS' },
+  });
+  await assert.rejects(duplicate, { code: 'ROOM_ALREADY_EXISTS' });
+  client.disconnect();
+});

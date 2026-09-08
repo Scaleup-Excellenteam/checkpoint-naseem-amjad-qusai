@@ -482,11 +482,17 @@ def test_malicious_url_blocks_delivery_before_dlp(auth, monkeypatch, caplog):
             "room": "pizza",
         },
     }]
-    assert [record.security_event for record in caplog.records] == [
+    # caplog also holds plain server.server records, which carry no
+    # security_event; only the structured tspo.security ones are asserted here.
+    security_records = [
+        r for r in caplog.records
+        if r.name == "tspo.security" and hasattr(r, "security_event")
+    ]
+    assert [record.security_event for record in security_records] == [
         "anti_bot",
         "anti_bot_url",
     ]
-    assert caplog.records[1].url_count == 1
+    assert security_records[1].url_count == 1
     assert content not in caplog.text
 
 

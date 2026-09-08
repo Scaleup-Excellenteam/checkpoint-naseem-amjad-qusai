@@ -1,8 +1,9 @@
 import pytest
 
 from server.validation import (
-    MAX_MESSAGE_LENGTH, MAX_ROOM_LENGTH, validate_chat_message,
-    validate_login, validate_room, validate_signup,
+    MAX_MESSAGE_LENGTH, MAX_ROOM_LENGTH, MAX_ROOM_NAME_LENGTH,
+    validate_chat_message, validate_login, validate_room, validate_room_name,
+    validate_signup,
 )
 
 
@@ -36,6 +37,28 @@ def test_invalid_room_values(room):
 @pytest.mark.parametrize("room", ["general", "חדר", "r" * MAX_ROOM_LENGTH])
 def test_valid_room_values(room):
     result = validate_room(room)
+    assert result.valid is True
+    assert result.reason is None
+
+
+@pytest.mark.parametrize("name", [
+    None, 123, [], {}, "", "   ", "my room", "room!!!", "room.name",
+    "room/name", "<script>", "רוֹם", "n" * (MAX_ROOM_NAME_LENGTH + 1),
+])
+def test_invalid_new_room_names(name):
+    """validate_room_name is stricter than validate_room: it is the policy
+    for a name the user invents, not for one the server already knows."""
+    result = validate_room_name(name)
+    assert result.valid is False
+    assert result.reason == "INVALID_ROOM_NAME"
+
+
+@pytest.mark.parametrize("name", [
+    "pizza", "football", "gaming-room", "room_1", "A", "0",
+    "n" * MAX_ROOM_NAME_LENGTH,
+])
+def test_valid_new_room_names(name):
+    result = validate_room_name(name)
     assert result.valid is True
     assert result.reason is None
 
